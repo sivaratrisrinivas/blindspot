@@ -12,3 +12,9 @@ dependencies = [
     "python-dotenv>=1.2.3",
     "rich>=15.0.0",
 ]
+
+[project.scripts]
+blindspot = "blindspot.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["blindspot*", "targets*"]
