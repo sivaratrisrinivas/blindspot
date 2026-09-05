@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from blindspot.types import AgentRun, AgentSpec
 from targets import invoice_agent, support_agent
 
@@ -15,8 +17,11 @@ def _invoice_answer(run: AgentRun):
 
 
 def _invoice_contract(output: str | None) -> bool:
-    """Output must name a booked GL account code of exactly 4 digits."""
-    raise NotImplementedError
+    """Output must confirm a booking and name a GL account code of exactly 4 digits."""
+    if not output:
+        return False
+    m = re.search(r"GL (\d+)", output)
+    return bool(m) and len(m.group(1)) == 4 and output.lower().startswith("booked")
 
 
 INVOICE = AgentSpec(
