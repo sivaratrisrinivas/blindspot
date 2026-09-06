@@ -19,22 +19,34 @@ class Mutator(Protocol):
 
 
 class CompositeMutator:
-    """Round-robins deterministic and semantic mutants at a fixed ratio (default 4:1).
-    Semantic is optional — if None (no Groq), this is just the deterministic stream."""
+    """One deterministic mutant most of the time, one semantic (Groq) mutant every
+    `det_ratio`-th call. The counter is shared across every per-seed stream, so the
+    ratio holds over the whole run instead of resetting each time the round-robin
+    scheduler revisits a seed. Semantic is optional — with no Groq this is just the
+    deterministic stream."""
 
     def __init__(self, det: Mutator, sem: Mutator | None = None, *, det_ratio: int = 4) -> None:
         self._det = det
         self._sem = sem
         self._det_ratio = max(1, det_ratio)
+        self._n = 0
+        self._sem_streams: dict[int, Iterator[Mutant]] = {}
+        self._sem_dead = False
 
     def mutate(self, seed: str, *, rng: Random) -> Iterator[Mutant]:
         det_stream = self._det.mutate(seed, rng=rng)
-        sem_stream = self._sem.mutate(seed, rng=rng) if self._sem else None
+        key = id(det_stream)
         while True:
-            for _ in range(self._det_ratio):
-                yield next(det_stream)
-            if sem_stream is not None:
+            self._n += 1
+            if (self._sem is not None and not self._sem_dead
+                    and self._n % (self._det_ratio + 1) == 0):
+                sem_stream = self._sem_streams.get(key)
+                if sem_stream is None:
+                    sem_stream = self._sem.mutate(seed, rng=rng)
+                    self._sem_streams[key] = sem_stream
                 try:
                     yield next(sem_stream)
+                    continue
                 except StopIteration:
-                    sem_stream = None
+                    self._sem_dead = True
+            yield next(det_stream)

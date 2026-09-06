@@ -55,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("-s", "--seed", type=int, default=0)
     ap.add_argument("-g", "--granularity", choices=[g.value for g in Granularity], default="medium")
     ap.add_argument("--judge-budget", type=int, default=30)
-    ap.add_argument("--no-semantic", action="store_true", help="deterministic mutations only")
+    ap.add_argument("--semantic", action="store_true", help="add Groq semantic mutations (slower, ~2s/call)")
     ap.add_argument("--no-judge", action="store_true", help="deterministic oracles only")
     ap.add_argument("--time-budget", type=float, default=None, help="stop after N seconds")
     ap.add_argument("--fix", action="store_true", help="dispatch one AO worker per failure class")
@@ -64,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     import os
-    if args.no_semantic:
+    if not args.semantic:
         os.environ["BLINDSPOT_NO_SEMANTIC"] = "1"
 
     traced = obs.init()

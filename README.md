@@ -53,7 +53,7 @@ Detection is a string comparison, so this is not a model grading a model.
 Two places, both optional and both off the critical path:
 
 - semantic mutation, to generate hostile-but-plausible inputs a random mutator
-  can't reach (Groq, `--no-semantic` to disable)
+  can't reach (Groq, opt in with `--semantic`)
 - the judge oracle, last resort only, for open-ended prose output where no
   deterministic check applies (Groq, budgeted, confidence reported)
 
@@ -156,8 +156,8 @@ unmeasured claim is worthless.
 uv sync
 export GROQ_API_KEY=...            # for semantic mutation and the judge oracle
 
-blindspot invoice                  # full run, live counters, emits a pytest file
-blindspot invoice --no-semantic --no-judge   # fully offline, deterministic
+blindspot invoice                  # fast: deterministic mutations, live counters, emits a pytest file
+blindspot invoice --semantic       # add Groq semantic mutations (slower, more coverage)
 blindspot support --judge-budget 20          # the judge-oracle showcase
 blindspot invoice --fix --fix-limit 3        # dispatch AO fix workers
 
