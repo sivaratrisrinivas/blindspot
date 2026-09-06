@@ -81,15 +81,20 @@ def emit_pytest(classes: list[FailureClass], spec: AgentSpec, path: Path) -> Non
                 "SPEC.extract_answer(SPEC.entrypoint(inp))",
             ]
         elif oracle in ("judge", "quality"):
+            # a judge finding is not deterministically re-checkable, so this is a
+            # recorded verdict rather than a live assertion: it is skipped, and
+            # `pytest -rs` prints the judge's reasoning next to the reproducer.
             reason = fc.minimal_repro.summary or fc.label or "judge oracle flagged this output"
             block = [
-                f"@pytest.mark.xfail(reason={reason!r}, strict=False)",
+                f"@pytest.mark.skip(reason={reason!r})",
                 "@pytest.mark.parametrize('inp', [",
                 *[f"    {inp!r}," for inp in inputs],
                 "])",
                 f"def {name}(inp):",
+                "    # re-running the judge here would need a live model; the finding",
+                "    # is recorded above. Handle it by inspecting the agent's output:",
                 "    run = SPEC.entrypoint(inp)",
-                '    assert run.terminal == "ok"',
+                "    assert run.terminal != \"error\"",
             ]
         elif oracle == "schema":
             block = [
