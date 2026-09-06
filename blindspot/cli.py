@@ -59,6 +59,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-judge", action="store_true", help="deterministic oracles only")
     ap.add_argument("--time-budget", type=float, default=None, help="stop after N seconds")
     ap.add_argument("--fix", action="store_true", help="dispatch one AO worker per failure class")
+    ap.add_argument("--fix-limit", type=int, default=0, help="cap how many fix workers --fix spawns (0 = all)")
     ap.add_argument("--out", default="run", help="output directory root")
     args = ap.parse_args(argv)
 
@@ -113,7 +114,8 @@ def main(argv: list[str] | None = None) -> int:
         _write_findings_fallback(run_dir, result)
 
     if args.fix:
-        _dispatch(classes, spec, str(test_path))
+        picked = classes[: args.fix_limit] if args.fix_limit else classes
+        _dispatch(picked, spec, str(test_path))
 
     obs.flush()
     return 0

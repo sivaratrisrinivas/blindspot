@@ -77,26 +77,56 @@ def dispatch_fixes(
     spec: AgentSpec,
     ao: AOClient,
     *,
-    test_path: str,
+    test_path: str | None = None,
 ) -> list[str]:
-    """One worker per class. Prompt = minimal repro + the emitted failing test +
-    'make it pass without regressing the rest of the suite'. Returns session ids."""
+    """One AO worker per failure class. The prompt is self-contained — the emitted
+    suite lives under run/ (gitignored) and is not on the worker's branch, so the
+    reproducer and the exact invariant are embedded and the worker writes its own
+    regression test under tests/. Returns the spawned session ids."""
+    module = f"targets/{spec.name}_agent.py"
     ids: list[str] = []
     for fc in classes:
+        repro = fc.minimal_repro.input
         lines = [
-            f"Failure class: {fc.label}",
-            f"Oracle: {fc.oracle}",
-            f"Minimal reproducer input:\n{fc.minimal_repro.input}",
+            f"Blindspot found a failure class in the {spec.name} agent ({module}).",
+            f"Class: {fc.label}",
+            "",
+            f"Reproducer input:\n{repro!r}",
         ]
-        if fc.oracle == "metamorphic":
-            mutant = fc.minimal_repro.evidence.get("mutant_input")
-            lines.append(f"Metamorphic mutant input:\n{mutant}")
-            lines.append("Both inputs must produce the same booking.")
-        lines.append(f"Failing test: {test_path}")
-        lines.append(
-            "Fix the target agent under targets/ so the failing test passes. "
-            "Do NOT weaken the test or the metamorphic relation. "
-            "Keep every other test green. Open a PR."
-        )
+        if fc.oracle == "crash":
+            et = fc.minimal_repro.evidence.get("error_type", "an exception")
+            lines += [
+                "",
+                f"On this input the agent raises {et} instead of completing a booking.",
+                "Fix the agent so this input produces a valid booking (or a clean, "
+                "explicit refusal via terminal='refused') — never an unhandled exception.",
+            ]
+        elif fc.oracle == "metamorphic":
+            mut = fc.minimal_repro.evidence.get("mutant_input")
+            a = fc.minimal_repro.evidence.get("baseline_answer")
+            b = fc.minimal_repro.evidence.get("mutant_answer")
+            lines += [
+                "",
+                f"This cosmetic variant must book identically but does not:\n{mut!r}",
+                f"  original books GL {a!r}, variant books GL {b!r}.",
+                "The transform (Unicode look-alike / whitespace / currency reformat / "
+                "line reorder / synonym) does not change the real invoice, so both "
+                "inputs must book to the SAME GL account. Fix the agent so they do — "
+                "by normalising the input, not by special-casing this string.",
+            ]
+        elif fc.oracle in ("schema", "contract"):
+            lines += ["", "The agent's output violates its contract on this input. "
+                      "Fix the agent so the contract holds."]
+        else:  # judge / quality
+            why = fc.minimal_repro.evidence.get("why", fc.label)
+            lines += ["", f"A reviewer flagged: {why}", "Fix the agent's behaviour on "
+                      "this kind of request."]
+        lines += [
+            "",
+            "Then: add a focused regression test to tests/ that asserts the fixed "
+            "behaviour on the reproducer (and, for metamorphic, that both inputs book "
+            "the same account). Run `python -m pytest -q` and keep every existing test "
+            "green. Do not weaken any assertion. Commit and open a PR.",
+        ]
         ids.append(ao.spawn_worker(f"fix-{fc.id}"[:20], "\n".join(lines)))
     return ids

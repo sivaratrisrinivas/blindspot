@@ -133,17 +133,22 @@ def test_dispatch_fixes_spawns_one_worker_per_class_with_distinct_names():
             return f"session-{len(calls)}"
 
     classes = [
-        _fc("crash-homoglyph", "crash", "Invoice from Åcme"),
+        _fc("crash-homoglyph", "crash", "Invoice from Åcme",
+            evidence={"error_type": "DateFormatError"}),
         _fc(
             "answer-drift",
             "metamorphic",
             "Invoice from Acme  Corp",
-            evidence={"mutant_input": "Invoice from Åcme Corp"},
+            evidence={"mutant_input": "Invoice from Åcme Corp",
+                      "baseline_answer": "1100", "mutant_answer": "6000"},
         ),
         _fc("schema-miss", "schema", "Bill: Globex 500 USD"),
     ]
 
-    ids = dispatch_fixes(classes, None, _AO(), test_path="run/latest/test_x.py")
+    class _Spec:
+        name = "invoice"
+
+    ids = dispatch_fixes(classes, _Spec(), _AO())
 
     assert ids == ["session-1", "session-2", "session-3"]
     names = [n for n, _ in calls]
@@ -152,8 +157,10 @@ def test_dispatch_fixes_spawns_one_worker_per_class_with_distinct_names():
 
     meta_prompt = calls[1][1]
     assert "Invoice from Åcme Corp" in meta_prompt
-    assert "same booking" in meta_prompt
-    assert "run/latest/test_x.py" in meta_prompt
-    assert "Open a PR." in meta_prompt
+    assert "SAME GL account" in meta_prompt
+    assert "open a pr." in meta_prompt.lower()
+    assert "targets/invoice_agent.py" in meta_prompt
 
-    assert "mutant" not in calls[0][1].lower()
+    crash_prompt = calls[0][1]
+    assert "DateFormatError" in crash_prompt
+    assert "mutant" not in crash_prompt.lower()
