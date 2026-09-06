@@ -6,8 +6,9 @@ Baseline run computed once per seed and cached, only when an active oracle needs
 
 from __future__ import annotations
 
-import concurrent.futures as cf
 import os
+import signal
+import threading
 import time
 from collections.abc import Callable
 from random import Random
@@ -30,22 +31,38 @@ from blindspot.types import (
     RunStats,
 )
 
-_AGENT_TIMEOUT_S = 10.0
+_AGENT_TIMEOUT_S = 5
+
+
+class _Timeout(Exception):
+    pass
 
 
 def _run_agent(spec: AgentSpec, text: str) -> AgentRun:
-    """Call the target with a wall-clock timeout. Exceptions and timeouts become an
-    AgentRun with the matching terminal state rather than propagating."""
+    """Call the target directly. Exceptions become a crash AgentRun; a SIGALRM guard
+    catches a genuine hang without paying thread-pool setup on every one of thousands
+    of iterations."""
     t0 = time.perf_counter()
+    use_alarm = (hasattr(signal, "SIGALRM")
+                 and threading.current_thread() is threading.main_thread())
+    if use_alarm:
+        def _fire(signum, frame):  # noqa: ANN001
+            raise _Timeout
+
+        old = signal.signal(signal.SIGALRM, _fire)
+        signal.alarm(_AGENT_TIMEOUT_S)
     try:
-        with cf.ThreadPoolExecutor(max_workers=1) as ex:
-            return ex.submit(spec.entrypoint, text).result(timeout=_AGENT_TIMEOUT_S)
-    except cf.TimeoutError:
+        return spec.entrypoint(text)
+    except _Timeout:
         return AgentRun(input=text, output=None, tool_calls=(), terminal="timeout",
                         latency_s=time.perf_counter() - t0)
     except Exception as exc:  # noqa: BLE001 — a target that throws is a crash finding
         return AgentRun(input=text, output=None, tool_calls=(), terminal="error",
                         error_type=type(exc).__name__, latency_s=time.perf_counter() - t0)
+    finally:
+        if use_alarm:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old)
 
 
 def _build_mutator(cfg: FuzzConfig) -> CompositeMutator:

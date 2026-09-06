@@ -18,3 +18,7 @@ blindspot = "blindspot.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["blindspot*", "targets*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["run", ".venv", ".git"]
