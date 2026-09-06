@@ -33,10 +33,12 @@
 - [ ] desktop GUI open for the Kanban shot:
       `~/.local/opt/ao-dl/extracted/usr/lib/agent-orchestrator/agent-orchestrator --no-sandbox`
 - [ ] `git status` clean, `origin/main` pushed
-- [ ] `python -m pytest -q` green (31 tests)
+- [ ] `python -m pytest -q` green (30 tests)
+- [ ] `python scripts/verify_pipeline.py` green (10 stages, including the CLI)
 - [ ] `blindspot invoice -n 600 --no-judge` runs clean end to end
 - [ ] `GROQ_API_KEY` set (only needed for `--semantic` / `blindspot support`)
-- [ ] optional: `NEATLOGS_API_KEY` for the traces shot; `TENSORMUX_API_KEY`
+- [ ] optional: `NEATLOGS_API_KEY` for the traces shot
+- [ ] optional: `TENSORMUX_API_KEY` for the `--provider tensormux` shot
 
 ## Known gaps, stated plainly in the video
 
