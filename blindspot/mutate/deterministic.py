@@ -25,7 +25,6 @@ HOMOGLYPHS = {"A": "Α", "E": "Ε", "O": "Ο", "a": "а", "e": "е", "o": "о", 
 _CAP_WORD = re.compile(r"\b([A-Z][a-z]{2,})\b")
 _MONEY = re.compile(r"\$\s?([0-9][0-9,]*(?:\.[0-9]{2})?)")
 _ISO_DATE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
-_INT = re.compile(r"(?<![.\d])(\d{2,})(?![.\d])")
 
 _SYNONYMS = [
     (r"\bInvoice from\b", "Bill from"),

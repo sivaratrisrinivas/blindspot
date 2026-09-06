@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import re
 
 from blindspot.types import AgentRun, AgentSpec
@@ -78,13 +79,7 @@ SUPPORT = AgentSpec(
     ),
 )
 
-ALL = [INVOICE, SUPPORT]
-
-import dataclasses
-
 INVOICE_FIXED = dataclasses.replace(INVOICE, name="invoice_fixed",
                                     entrypoint=invoice_agent_fixed.run)
 SUPPORT_FIXED = dataclasses.replace(SUPPORT, name="support_fixed",
                                     entrypoint=support_agent_fixed.run)
-
-ALL_FIXED = [INVOICE_FIXED, SUPPORT_FIXED]
