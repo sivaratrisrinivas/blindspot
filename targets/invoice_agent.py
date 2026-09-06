@@ -79,14 +79,11 @@ def _rough_amount(text: str) -> int:
 
 
 def _parse_date(text: str) -> tuple[int, int, int]:
-    """ISO-only (blind spot #5). Then reject closed periods (blind spot #6)."""
+    """ISO-only (blind spot #5)."""
     m = _ISO_DATE.search(text)
     if not m:
         raise DateFormatError(f"no ISO (YYYY-MM-DD) date in {text!r}")
-    y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
-    if (y, mo, d) < (2026, 1, 1):
-        raise PeriodClosedError(f"{y:04d}-{mo:02d}-{d:02d} is in a closed period")
-    return y, mo, d
+    return int(m.group(1)), int(m.group(2)), int(m.group(3))
 
 
 def _parse_vendor(text: str) -> str:
@@ -133,6 +130,11 @@ def run(text: str) -> AgentRun:
         calls.append(ToolCall("parse_vendor", {"vendor": vendor}, ok=vendor != "UNKNOWN"))
 
         y, mo, d = _parse_date(text)
+        if (y, mo, d) < (2026, 1, 1):
+            calls.append(ToolCall("check_period", {"year": y, "month": mo}, ok=False))
+            return done(f"Invoice dated {y:04d}-{mo:02d}-{d:02d} falls in a closed "
+                        f"period; routing to the prior-period accrual process.",
+                        "refused")
         calls.append(ToolCall("check_period", {"year": y, "month": mo}, ok=True))
 
         amount = _parse_amount(text)
