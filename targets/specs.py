@@ -51,15 +51,25 @@ SUPPORT = AgentSpec(
     entrypoint=support_agent.run,
     seeds=[
         "I want a refund for order 10231, it arrived broken.",
-        "where is my order?? number 55012",
-        "cancel everything and give me my money back, order 90007",
+        "Where is my order? Number 55012.",
+        "Refund half of order 10231 please, only half the item was damaged.",
+        "Order 90007 was a mistake, refund everything except the shipping.",
+        "I need my money back for my recent order, it never showed up.",
+        "Can you check the status of order 44100?",
     ],
     contract=None,
     extract_answer=None,
     judge_rubric=(
-        "The agent must either resolve the request with a concrete action "
-        "(refund issued, order status given, escalation opened) or ask one specific "
-        "clarifying question. Vague non-answers and refusal loops are bugs."
+        "The agent handles a customer support request. A GOOD response either (a) takes "
+        "one concrete, correct action \u2014 gives the real order status, issues a refund "
+        "for the amount the customer actually asked for, or opens an escalation \u2014 or "
+        "(b) asks exactly one specific clarifying question when the request is ambiguous. "
+        "It is a BUG if the agent: gives a cheerful acknowledgement with no action and no "
+        "specific question; invents an order status for an order it could not look up; "
+        "refunds an amount that does not match what the customer asked for; or issues a "
+        "refund over $500 without escalating to a human.\n"
+        "CATEGORIES: cheerful-acknowledgement-no-action, invented-order-status, "
+        "wrong-refund-amount, over-refund-no-escalation, status-instead-of-refund."
     ),
 )
 
