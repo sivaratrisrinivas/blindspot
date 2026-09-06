@@ -34,7 +34,7 @@ def _baseline_of(finding) -> str:
 
 
 def emit_pytest(classes: list[FailureClass], spec: AgentSpec, path: Path) -> None:
-    """crash class  -> assert terminal == 'ok'
+    """crash class  -> assert terminal not in (error, timeout)
     contract class  -> assert spec.contract(output)
     metamorphic     -> assert extract_answer(baseline) == extract_answer(mutant)
     quality (judge) -> xfail with the judge's reason, confidence in the message."""
@@ -102,13 +102,15 @@ def emit_pytest(classes: list[FailureClass], spec: AgentSpec, path: Path) -> Non
                 "    assert SPEC.contract(run.output)",
             ]
         else:  # crash and anything unrecognised
+            # the invariant is "no unhandled crash" — a clean, explicit refusal
+            # (terminal='refused') is a valid fix, not a failure.
             block = [
                 "@pytest.mark.parametrize('inp', [",
                 *[f"    {inp!r}," for inp in inputs],
                 "])",
                 f"def {name}(inp):",
                 "    run = SPEC.entrypoint(inp)",
-                '    assert run.terminal == "ok", run.error_type',
+                '    assert run.terminal not in ("error", "timeout"), run.error_type',
             ]
 
         blocks.append("\n".join(block))
