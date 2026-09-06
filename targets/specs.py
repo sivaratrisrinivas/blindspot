@@ -29,8 +29,17 @@ INVOICE = AgentSpec(
     entrypoint=invoice_agent.run,
     seeds=[
         "Invoice from Acme Corp for $1,240.00 dated 2026-03-01 for office chairs.",
-        "Bill: Globex, amount 500 USD, 01/03/2026, consulting.",
-        "Initech invoice #4471 — $3,000 — March 2026 — software licenses.",
+        "Bill from Globex for $500.00 dated 2026-01-03 for consulting services.",
+        "Invoice from Initech for $3,000.00 dated 2026-03-15 for software licenses.",
+        "Vendor: Umbrella LLC. Amount: $875.50. Date: 2026-02-14. Lab supplies.",
+        "Bill from Soylent Inc for $2,100.00 dated 2026-03-20 for catering.",
+        "Invoice from Acme Corp for $12,500.00 dated 2026-04-01 for a forklift.",
+        ("Invoice from Acme Corp for warehouse fit-out\n"
+         "Ship to: Globex distribution center\n"
+         "Amount: $1,240.00 dated 2026-03-01"),
+        ("Invoice from Initech\n"
+         "Remit to: Umbrella LLC\n"
+         "Total: $3,000.00 on 2026-03-15"),
     ],
     contract=_invoice_contract,
     extract_answer=_invoice_answer,

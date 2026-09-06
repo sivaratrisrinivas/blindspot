@@ -158,3 +158,67 @@ class DeterministicMutator:
             if not applied or text == seed:
                 continue
             yield Mutant(text=text, lineage=tuple(applied), answer_preserving=preserving)
+
+
+# --- deterministic single-site application, used by the minimiser -----------------
+# ddmin needs to re-apply "the same transform" to a shrinking input without an rng.
+# Each entry applies its op at the first applicable site, or returns text unchanged.
+
+def _det_homoglyph(text: str) -> str:
+    for m in _CAP_WORD.finditer(text):
+        w = m.group(1)
+        for i, ch in enumerate(w):
+            if ch in _HOMOGLYPHS:
+                sw = w[:i] + _HOMOGLYPHS[ch] + w[i + 1:]
+                return text[:m.start(1)] + sw + text[m.end(1):]
+    return text
+
+
+def _det_whitespace(text: str) -> str:
+    i = text.find(" ")
+    return text if i < 0 else text[:i] + "  " + text[i + 1:]
+
+
+def _det_currency(text: str) -> str:
+    return _MONEY.sub(lambda m: "USD " + m.group(1).replace(",", ""), text, count=1)
+
+
+def _det_reorder(text: str) -> str:
+    lines = text.splitlines()
+    return "\n".join(reversed(lines)) if len(lines) > 1 else text
+
+
+def _det_date(text: str) -> str:
+    months = ["January", "February", "March", "April", "May", "June", "July",
+              "August", "September", "October", "November", "December"]
+
+    def repl(m: re.Match) -> str:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        return f"{d} {months[mo - 1]} {y}" if 1 <= mo <= 12 else m.group(0)
+
+    return _ISO_DATE.sub(repl, text, count=1)
+
+
+def _det_synonym(text: str) -> str:
+    for pat, sub in _SYNONYMS:
+        new = re.sub(pat, sub, text, count=1)
+        if new != text:
+            return new
+    return text
+
+
+_DETERMINISTIC_OPS = {
+    "homoglyph_entity": _det_homoglyph,
+    "inject_whitespace": _det_whitespace,
+    "reformat_currency": _det_currency,
+    "reorder_lines": _det_reorder,
+    "reformat_date": _det_date,
+    "synonym_swap": _det_synonym,
+    "pad_context": lambda t: t + " Please file under Q1 procurement.",
+}
+
+
+def apply_deterministic(op_name: str, text: str) -> str:
+    """Apply one answer-preserving op at its first applicable site, no rng."""
+    fn = _DETERMINISTIC_OPS.get(op_name)
+    return fn(text) if fn else text
