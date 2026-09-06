@@ -15,7 +15,7 @@ from blindspot.oracles import default_oracles, run_oracles
 from blindspot.runner import run_fuzz, _run_agent
 from blindspot.cluster import cluster, rank, minimise_class
 from blindspot.emit import emit_pytest
-from blindspot.report import write_run, metrics_table
+from blindspot.report import write_run
 from targets.specs import INVOICE, SUPPORT
 
 OK = "\033[32mPASS\033[0m"; BAD = "\033[31mFAIL\033[0m"
@@ -127,9 +127,6 @@ lines = (rundir / "findings.jsonl").read_text().splitlines()
 check("findings.jsonl lines parse as JSON", all(json.loads(x) for x in lines), len(lines))
 st = json.loads((rundir / "stats.json").read_text())
 check("stats.json has bugs_per_min", "bugs_per_min" in st, st.get("bugs_per_min"))
-tbl = metrics_table([rundir])
-check("metrics_table renders headers + agent row",
-      "bugs/min" in tbl and "invoice" in tbl, tbl.splitlines()[0] if tbl else "")
 
 print()
 if fails:

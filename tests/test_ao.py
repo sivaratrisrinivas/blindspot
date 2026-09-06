@@ -1,9 +1,8 @@
 """AOClient is a thin HTTP adapter; these tests are hermetic — the transport is
-a fake exposing .post/.get, and time.sleep is patched out."""
+a fake exposing .post."""
 
 from __future__ import annotations
 
-import blindspot.ao as ao_mod
 from blindspot.ao import AOClient, dispatch_fixes
 from blindspot.types import FailureClass, Finding
 
@@ -17,20 +16,13 @@ class _Resp:
 
 
 class _FakeTransport:
-    def __init__(self, *, get_payloads=None, post_payload=None):
-        self._get_payloads = list(get_payloads or [])
+    def __init__(self, *, post_payload=None):
         self._post_payload = post_payload
         self.posts: list[tuple[str, dict]] = []
-        self.gets: list[str] = []
 
     def post(self, url, json=None):
         self.posts.append((url, json or {}))
         return _Resp(self._post_payload)
-
-    def get(self, url):
-        self.gets.append(url)
-        payload = self._get_payloads.pop(0)
-        return _Resp(payload)
 
 
 def _client(**kwargs):
@@ -76,52 +68,6 @@ def test_spawn_worker_posts_envelope_and_returns_id():
     assert body["model"] == "haiku"
     assert body["prompt"] == "do the thing"
     assert len(body["displayName"]) <= 20
-
-
-def test_get_unwraps_session_key():
-    c = _client(get_payloads=[{"session": {"id": "blindspot-1", "status": "working"}}])
-
-    assert c.get("blindspot-1") == {"id": "blindspot-1", "status": "working"}
-    assert c._c.gets == ["/api/v1/sessions/blindspot-1"]
-
-
-def test_list_unwraps_sessions_key():
-    c = _client(get_payloads=[{"sessions": [{"id": "a"}, {"id": "b"}]}])
-
-    assert c.list() == [{"id": "a"}, {"id": "b"}]
-
-
-def test_poll_returns_once_status_is_terminal(monkeypatch):
-    slept: list[float] = []
-    monkeypatch.setattr(ao_mod.time, "sleep", lambda s: slept.append(s))
-
-    c = _client(
-        get_payloads=[
-            {"session": {"id": "s", "status": "working", "prs": []}},
-            {"session": {"id": "s", "status": "mergeable", "prs": []}},
-        ]
-    )
-
-    out = c.poll("s", interval_s=15)
-
-    assert out["status"] == "mergeable"
-    assert len(c._c.gets) == 2
-    assert slept == [15]
-
-
-def test_poll_returns_when_pr_appears(monkeypatch):
-    monkeypatch.setattr(ao_mod.time, "sleep", lambda s: None)
-
-    c = _client(
-        get_payloads=[
-            {"session": {"id": "s", "status": "working", "prs": [{"url": "http://pr/1"}]}},
-        ]
-    )
-
-    out = c.poll("s")
-
-    assert out["prs"] == [{"url": "http://pr/1"}]
-    assert len(c._c.gets) == 1
 
 
 def test_dispatch_fixes_spawns_one_worker_per_class_with_distinct_names():

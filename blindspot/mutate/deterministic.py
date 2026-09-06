@@ -21,7 +21,7 @@ def _op(name: str, preserving: bool):
     return deco
 
 
-_HOMOGLYPHS = {"A": "Α", "E": "Ε", "O": "Ο", "a": "а", "e": "е", "o": "о", "c": "с", "p": "р"}
+HOMOGLYPHS = {"A": "Α", "E": "Ε", "O": "Ο", "a": "а", "e": "е", "o": "о", "c": "с", "p": "р"}
 _CAP_WORD = re.compile(r"\b([A-Z][a-z]{2,})\b")
 _MONEY = re.compile(r"\$\s?([0-9][0-9,]*(?:\.[0-9]{2})?)")
 _ISO_DATE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
@@ -46,8 +46,8 @@ def homoglyph_entity(text: str, rng: Random) -> str:
         return text
     target = rng.choice(words)
     for i, ch in enumerate(target):
-        if ch in _HOMOGLYPHS:
-            swapped = target[:i] + _HOMOGLYPHS[ch] + target[i + 1:]
+        if ch in HOMOGLYPHS:
+            swapped = target[:i] + HOMOGLYPHS[ch] + target[i + 1:]
             return text.replace(target, swapped, 1)
     return text
 
@@ -168,8 +168,8 @@ def _det_homoglyph(text: str) -> str:
     for m in _CAP_WORD.finditer(text):
         w = m.group(1)
         for i, ch in enumerate(w):
-            if ch in _HOMOGLYPHS:
-                sw = w[:i] + _HOMOGLYPHS[ch] + w[i + 1:]
+            if ch in HOMOGLYPHS:
+                sw = w[:i] + HOMOGLYPHS[ch] + w[i + 1:]
                 return text[:m.start(1)] + sw + text[m.end(1):]
     return text
 

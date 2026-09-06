@@ -15,7 +15,7 @@ from blindspot import run_fuzz, FuzzConfig, cluster, rank, minimise_class, emit_
 from blindspot.ao import AOClient, dispatch_fixes
 from targets.specs import INVOICE
 
-result = run_fuzz(INVOICE, FuzzConfig(iterations=800, parallelism=8, seed=0))
+result = run_fuzz(INVOICE, FuzzConfig(iterations=800, seed=0))
 classes = rank(cluster(result.findings))
 for fc in classes:
     minimise_class(fc, INVOICE)          # shrinks fc.minimal_repro in place
@@ -155,7 +155,6 @@ class AgentSpec:
 @dataclass
 class FuzzConfig:
     iterations: int
-    parallelism: int = 8
     granularity: Granularity = Granularity.MEDIUM
     seed: int = 0
     judge_budget: int = 40
@@ -172,8 +171,8 @@ def run_fuzz(spec: AgentSpec, cfg: FuzzConfig) -> FuzzResult: ...
 ```
 
 Loop: round-robin a seed from the corpus (handoff: no clever scheduler) -> mutate ->
-run agent (thread pool, `parallelism` wide) -> signature -> `corpus.add` returns True
-if novel -> run active oracles -> collect findings. Baseline run computed once per
+run agent (in-process, with a SIGALRM hang guard) -> signature -> `corpus.add` returns
+True if novel -> run active oracles -> collect findings. Baseline run computed once per
 seed and cached when any oracle `needs_baseline`.
 
 ## Minimiser — delta debugging (the one place TDD applies)
@@ -215,15 +214,12 @@ class FailureClass:
 
 ```python
 class AOClient:
-    def __init__(self, base_url="http://localhost:3011", project="."): ...
+    def __init__(self, base_url="http://localhost:3011", project="blindspot"): ...
     def spawn_worker(self, name: str, prompt: str, *, model: str = "sonnet") -> str   # POST /api/v1/sessions
-    def send(self, sid: str, msg: str) -> None                                        # POST .../{id}/send
-    def get(self, sid: str) -> dict                                                   # GET .../{id}
-    def list(self) -> list[dict]                                                      # GET /api/v1/sessions
 
 def dispatch_fixes(classes, spec, ao) -> list[str]:
-    """One worker session per class. Prompt = minimal repro + emitted failing test +
-    'make it pass without regressing the corpus'. Returns session ids to poll."""
+    """One worker session per class. The prompt is self-contained: minimal repro +
+    the exact invariant. Returns the session ids; watch them on the AO board."""
 ```
 
 ## Module map
@@ -233,7 +229,7 @@ blindspot/
   types.py         AgentRun, ToolCall, Mutant, Finding, FailureClass, AgentSpec, configs — no logic
   signature.py     behaviour_signature(), Granularity
   corpus.py        Corpus (add-if-novel, round-robin next_seed)
-  llm.py           Groq client factory (openai SDK + base_url), retry, cost tally
+  llm.py           provider table (Groq, TensorMux) + OpenAI-compatible client, retry, cost tally
   mutate/
     __init__.py    Mutator protocol, CompositeMutator
     deterministic.py  metamorphic + structural ops, each tagged answer_preserving
@@ -241,13 +237,13 @@ blindspot/
   oracles/
     __init__.py    Oracle protocol, OracleContext, run_oracles(), DEFAULT_ORACLES
     crash.py  schema.py  metamorphic.py  judge.py
-  runner.py        run_fuzz(), thread-pool executor, baseline cache
+  runner.py        run_fuzz(), SIGALRM hang guard, baseline cache
   minimise.py      ddmin  (TDD'd)
   cluster.py       cluster() + rank() + minimise_class()
   emit.py          emit_pytest()
   ao.py            AOClient, dispatch_fixes()
-  report.py        metrics table across agents; JSONL read/write
-  cli.py           `blindspot targets/specs.py:INVOICE` — rich live counters
+  report.py        write_run(): findings.jsonl, corpus.jsonl, stats.json
+  cli.py           `blindspot invoice` — rich live counters, then the reveal
 targets/
   support_agent.py  invoice_agent.py  specs.py
 run/                per-run dirs: findings.jsonl, corpus.jsonl, stats.json, emitted tests

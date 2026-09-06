@@ -11,10 +11,10 @@ import httpx
 
 from blindspot.types import AgentSpec, FailureClass
 
-_TERMINAL = ("mergeable", "blocked", "conflicted")
-
-
 class AOClient:
+    """The injectable seam for dispatch_fixes. Spawning is the only call the fix
+    loop makes: workers are watched on the AO board, not polled from here."""
+
     def __init__(self, base_url: str | None = None, project: str = "blindspot") -> None:
         base_url = base_url or f"http://localhost:{os.environ.get('AO_PORT', '3011')}"
         self._c = httpx.Client(base_url=base_url, timeout=httpx.Timeout(90.0, connect=10.0))
@@ -39,42 +39,6 @@ class AOClient:
                     raise
                 time.sleep(5)
         raise RuntimeError("unreachable")
-
-    def send(self, sid: str, msg: str) -> None:
-        """POST /api/v1/sessions/{id}/send."""
-        self._c.post(f"/api/v1/sessions/{sid}/send", json={"message": msg})
-
-    def get(self, sid: str) -> dict:
-        """GET /api/v1/sessions/{id}."""
-        return self._c.get(f"/api/v1/sessions/{sid}").json()["session"]
-
-    def list(self) -> list[dict]:
-        """GET /api/v1/sessions."""
-        return self._c.get("/api/v1/sessions").json()["sessions"]
-
-    def poll(
-        self,
-        sid: str,
-        *,
-        until: tuple[str, ...] = _TERMINAL,
-        timeout_s: float = 900,
-        interval_s: float = 15,
-    ) -> dict:
-        """Block until the session reaches a terminal status, opens a PR, or times out."""
-        start = time.monotonic()
-        while True:
-            session = self.get(sid)
-            done = (
-                session.get("status") in until
-                or bool(session.get("prs"))
-                or time.monotonic() - start > timeout_s
-            )
-            if done:
-                return session
-            time.sleep(interval_s)
-
-    def close(self) -> None:
-        self._c.close()
 
 
 def dispatch_fixes(

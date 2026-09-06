@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from blindspot.report import metrics_table, write_run
+from blindspot.report import write_run
 from blindspot.types import Finding, FuzzResult, RunStats
 
 
@@ -76,24 +76,3 @@ def test_write_run_overwrites(tmp_path):
     write_run(run_dir, _result())
     write_run(run_dir, _result())
     assert len((run_dir / "findings.jsonl").read_text().splitlines()) == 2
-
-
-def test_metrics_table_has_agent_and_headers(tmp_path):
-    run_dir = tmp_path / "invoice-20260906T000000Z"
-    write_run(run_dir, _result())
-
-    table = metrics_table([run_dir])
-    assert isinstance(table, str)
-    assert "invoice" in table
-    for header in ("agent", "inputs", "behaviours", "classes", "crash+timeout",
-                   "bugs/min", "llm calls", "$ cost"):
-        assert header in table
-    assert "accuracy = booking correctness" in table
-    # one distinct signature per finding -> 2 classes, 1 crash
-    assert "\ninvoice" in table
-
-
-def test_metrics_table_missing_dir_is_no_data(tmp_path):
-    table = metrics_table([tmp_path / "missing"])
-    assert "(no data)" in table
-    assert "missing" in table

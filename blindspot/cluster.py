@@ -7,8 +7,8 @@ import re
 from collections import OrderedDict
 
 from blindspot.minimise import minimise
-from blindspot.mutate.deterministic import apply_deterministic
-from blindspot.oracles.metamorphic import _transform_family
+from blindspot.mutate.deterministic import HOMOGLYPHS, apply_deterministic
+from blindspot.oracles.metamorphic import transform_family
 from blindspot.types import AgentRun, AgentSpec, FailureClass, Finding
 
 SEVERITY_WEIGHT = {"crash": 4.0, "contract": 3.0, "semantic": 3.5, "quality": 1.5}
@@ -100,9 +100,6 @@ def _best_start(fc: FailureClass, pred) -> str | None:
     return fc.minimal_repro.input if pred(fc.minimal_repro.input) else None
 
 
-_HOMOGLYPHS = {"A": "Α", "E": "Ε", "O": "Ο", "a": "а", "e": "е", "o": "о", "c": "с", "p": "р"}
-
-
 def _replay_sites(dominant: str, base: str):
     """Yield every way the dominant answer-preserving transform could be applied to
     `base`. The caller keeps the first one that flips the agent's answer, so the
@@ -110,8 +107,8 @@ def _replay_sites(dominant: str, base: str):
     if dominant == "homoglyph_entity":
         for m in re.finditer(r"[A-Za-z]", base):
             ch = m.group(0)
-            if ch in _HOMOGLYPHS:
-                yield base[:m.start()] + _HOMOGLYPHS[ch] + base[m.end():]
+            if ch in HOMOGLYPHS:
+                yield base[:m.start()] + HOMOGLYPHS[ch] + base[m.end():]
     elif dominant == "inject_whitespace":
         for i, ch in enumerate(base):
             if ch == " ":
@@ -126,7 +123,7 @@ def _minimise_metamorphic(fc: FailureClass, spec: AgentSpec, unit: str) -> None:
     if spec.extract_answer is None:
         return
     lineage = tuple(fc.minimal_repro.evidence.get("transform", ()))
-    dominant = _transform_family(lineage)
+    dominant = transform_family(lineage)
     baseline = fc.minimal_repro.evidence.get("baseline_input") or fc.minimal_repro.input
     unit = "line" if dominant == "reorder_lines" else unit
 

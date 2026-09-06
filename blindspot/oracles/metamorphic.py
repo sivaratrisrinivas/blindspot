@@ -23,7 +23,7 @@ _OP_PRIORITY = (
 )
 
 
-def _transform_family(lineage: tuple[str, ...]) -> str:
+def transform_family(lineage: tuple[str, ...]) -> str:
     """One class per dominant relation kind, so 'the Unicode one' is its own cluster
     regardless of which cosmetic transforms rode along with it."""
     for op in _OP_PRIORITY:
@@ -48,7 +48,7 @@ class MetamorphicOracle:
         after = ctx.spec.extract_answer(ctx.mutant_run)
         if before == after:
             return []
-        family = _transform_family(ctx.mutant.lineage)
+        family = transform_family(ctx.mutant.lineage)
         return [Finding(
             oracle=self.name,
             input=ctx.mutant.text,

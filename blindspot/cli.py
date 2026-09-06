@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
-import time
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,8 +14,11 @@ from rich.live import Live
 from rich.table import Table
 
 from blindspot import obs
+from blindspot.ao import AOClient, dispatch_fixes
 from blindspot.cluster import cluster, minimise_class, rank
+from blindspot.emit import MAX_PARAMS, emit_pytest
 from blindspot.oracles import default_oracles
+from blindspot.report import write_run
 from blindspot.runner import run_fuzz
 from blindspot.types import AgentSpec, FuzzConfig, Granularity, RunStats
 
@@ -51,7 +54,6 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="blindspot", description=__doc__)
     ap.add_argument("spec", help="agent spec: 'invoice', or 'module:ATTR'")
     ap.add_argument("-n", "--iterations", type=int, default=600)
-    ap.add_argument("-p", "--parallelism", type=int, default=8)
     ap.add_argument("-s", "--seed", type=int, default=0)
     ap.add_argument("-g", "--granularity", choices=[g.value for g in Granularity], default="medium")
     ap.add_argument("--judge-budget", type=int, default=30)
@@ -63,14 +65,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", default="run", help="output directory root")
     args = ap.parse_args(argv)
 
-    import os
     if not args.semantic:
         os.environ["BLINDSPOT_NO_SEMANTIC"] = "1"
 
     traced = obs.init()
     spec = _load_spec(args.spec)
     cfg = FuzzConfig(
-        iterations=args.iterations, parallelism=args.parallelism, seed=args.seed,
+        iterations=args.iterations, seed=args.seed,
         granularity=Granularity(args.granularity), judge_budget=args.judge_budget,
         time_budget_s=args.time_budget,
     )
@@ -99,19 +100,11 @@ def main(argv: list[str] | None = None) -> int:
     _reveal(spec, result.stats, classes)
 
     test_path = run_dir / f"test_blindspot_{spec.name}.py"
-    try:
-        from blindspot.emit import emit_pytest
-        emit_pytest(classes, spec, test_path)
-        console.print(f"\n[green]wrote[/] {test_path}  ({_count_tests(classes)} regression tests)")
-    except Exception as exc:  # noqa: BLE001
-        console.print(f"\n[yellow]emit skipped:[/] {exc}")
+    emit_pytest(classes, spec, test_path)
+    console.print(f"\n[green]wrote[/] {test_path}  ({_count_tests(classes)} regression tests)")
 
-    try:
-        from blindspot.report import write_run
-        write_run(run_dir, result)
-        console.print(f"[green]wrote[/] {run_dir}/findings.jsonl")
-    except Exception:  # noqa: BLE001
-        _write_findings_fallback(run_dir, result)
+    write_run(run_dir, result)
+    console.print(f"[green]wrote[/] {run_dir}/findings.jsonl")
 
     if args.fix:
         picked = classes[: args.fix_limit] if args.fix_limit else classes
@@ -144,26 +137,10 @@ def _reveal(spec: AgentSpec, stats: RunStats, classes: list) -> None:
 
 
 def _count_tests(classes: list) -> int:
-    return sum(min(len({m.input for m in fc.members}), 8) for fc in classes) or 1
-
-
-def _write_findings_fallback(run_dir: Path, result) -> None:
-    import json
-    with (run_dir / "findings.jsonl").open("w") as fh:
-        for f in result.findings:
-            fh.write(json.dumps({
-                "oracle": f.oracle, "signature": f.signature, "severity": f.severity,
-                "summary": f.summary, "input": f.input, "confidence": f.confidence,
-            }) + "\n")
-    (run_dir / "stats.json").write_text(json.dumps(result.stats.__dict__, default=str, indent=2))
+    return sum(min(len({m.input for m in fc.members}), MAX_PARAMS) for fc in classes) or 1
 
 
 def _dispatch(classes: list, spec: AgentSpec, test_path: str) -> None:
-    try:
-        from blindspot.ao import AOClient, dispatch_fixes
-    except Exception as exc:  # noqa: BLE001
-        console.print(f"[yellow]--fix unavailable:[/] {exc}")
-        return
     ao = AOClient()
     ids: list[str] = []
     try:

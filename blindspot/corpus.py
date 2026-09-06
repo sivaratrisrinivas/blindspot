@@ -30,9 +30,6 @@ class Corpus:
         self._queue.append(seed)
         return seed
 
-    def seen(self, sig: str) -> bool:
-        return sig in self._signatures
-
     @property
     def signatures(self) -> set[str]:
         return set(self._signatures)

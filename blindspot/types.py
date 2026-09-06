@@ -33,7 +33,6 @@ class AgentRun:
     escalated: bool = False
     latency_s: float = 0.0
     cost_usd: float = 0.0
-    raw: dict = field(default_factory=dict)  # spillover for the judge oracle
 
 
 TargetAgent = Callable[[str], AgentRun]
@@ -104,7 +103,6 @@ class AgentSpec:
 @dataclass
 class FuzzConfig:
     iterations: int
-    parallelism: int = 8
     granularity: Granularity = Granularity.MEDIUM
     seed: int = 0
     judge_budget: int = 40
