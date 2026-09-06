@@ -17,6 +17,8 @@ Planted blind spots, each a failure *class* Blindspot should rediscover on its o
                                                      [crash: AmountParseError]
   5. date parser is ISO-only; "1 March 2026" raises. [crash: DateFormatError]
   6. anything dated before 2026-01-01 is a hard reject. [crash: PeriodClosedError]
+     FIXED: a closed period is now a clean refusal (terminal="refused"), not a
+     raised exception surfaced as terminal="error".
 """
 
 from __future__ import annotations
@@ -151,5 +153,10 @@ def run(text: str) -> AgentRun:
         calls.append(ToolCall("book_invoice", entry, ok=True))
         out = f"Booked {vendor} ${entry['amount']:.2f} to GL {gl}."
         return done(out, "ok", escalated=not matched)
+    except PeriodClosedError as exc:
+        # A closed accounting period is a business rule, not a crash: refuse
+        # cleanly and hand it to the prior-period accrual process.
+        calls.append(ToolCall("check_period", {"closed": True}, ok=False))
+        return done(f"{exc} — routing to the prior-period accrual process.", "refused")
     except Exception as exc:  # noqa: BLE001 — the agent must never crash the fuzzer
         return done(None, "error", err=type(exc).__name__)
