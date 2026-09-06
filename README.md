@@ -109,6 +109,18 @@ is LLM spend (zero for the deterministic invoice run).
 
 The targets are toys, so the numbers are toy numbers. The tool is the artefact.
 
+### Validation gates
+
+Three checks, each with a kill criterion, run before trusting the pipeline:
+
+- **Gate 1, metamorphic precision** (`scripts/gate1_metamorphic.py`). Six
+  hand-written cosmetic relations over the invoice agent: 42 trials, 11 flagged
+  violations, all 11 genuine, zero false positives. Threshold was six genuine.
+- **Gate 2, coverage guidance** (`scripts/gate2_coverage.py`). Covered below.
+- **Gate 3, recall on planted bugs** (`scripts/gate3_recall.py`). The invoice
+  agent has six planted blind spots. Across eight RNG seeds the fuzzer catches
+  6/6 every time.
+
 ### What we measured that didn't work
 
 The corpus is coverage-aware: it fingerprints each run's behaviour, dedupes
