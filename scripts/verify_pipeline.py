@@ -128,8 +128,21 @@ check("findings.jsonl lines parse as JSON", all(json.loads(x) for x in lines), l
 st = json.loads((rundir / "stats.json").read_text())
 check("stats.json has bugs_per_min", "bugs_per_min" in st, st.get("bugs_per_min"))
 
+print("\n=== 10. the CLI itself ===")
+# stages 1-9 import the library directly, so they stayed green while blindspot/cli.py
+# was overwritten with README markdown (b31aebc). Run the real entrypoint.
+cli = subprocess.run([sys.executable, "-m", "blindspot.cli", "invoice", "-n", "120",
+                      "--no-judge", "--out", tempfile.mkdtemp()],
+                     capture_output=True, text=True, cwd=".",
+                     env={**os.environ, "BLINDSPOT_NO_SEMANTIC": "1"})
+check("blindspot CLI exits 0", cli.returncode == 0, (cli.stderr or cli.stdout)[-200:])
+check("CLI reports failure classes", "failure classes" in cli.stdout)
+check("CLI wrote a regression suite", "regression tests" in cli.stdout)
+check("every module the CLI imports is importable", "Traceback" not in cli.stderr,
+      cli.stderr[-200:])
+
 print()
 if fails:
     print(f"\033[31m{len(fails)} STAGE(S) FAILED: {fails}\033[0m")
     sys.exit(1)
-print("\033[32mALL 9 PIPELINE STAGES VERIFIED\033[0m")
+print("\033[32mALL 10 PIPELINE STAGES VERIFIED\033[0m")
