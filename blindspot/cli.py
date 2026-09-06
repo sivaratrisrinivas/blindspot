@@ -1,200 +1,179 @@
-# Blindspot
+"""`blindspot invoice` — point it at an agent, watch it find the failures you never
+imagined, then get the regression suite you never wrote."""
 
-A coverage-aware fuzzer for AI agents. Point it at an agent. About ninety seconds
-later it hands you the failure classes the author never thought to test, a minimal
-input that reproduces each one, and a pytest file full of regression tests nobody
-wrote.
+from __future__ import annotations
 
-Built for the Syndicate by Maximor hackathon, Track 1.
+import argparse
+import importlib
+import time
+from datetime import datetime, timezone
+from pathlib import Path
 
-```
-blindspot invoice
-```
+from rich.console import Console
+from rich.live import Live
+from rich.table import Table
 
-## The problem
+from blindspot import obs
+from blindspot.cluster import cluster, minimise_class, rank
+from blindspot.oracles import default_oracles
+from blindspot.runner import run_fuzz
+from blindspot.types import AgentSpec, FuzzConfig, Granularity, RunStats
 
-Your agent passes every eval you wrote. That tells you nothing about the failures
-you didn't imagine, because an eval set is a portrait of its author's assumptions.
-Prompt optimisation is the well-trodden half of "improve an agent and analyse where
-it fails." Failure discovery is the other half, and it is mostly unsolved.
+console = Console()
 
-The lock analogy: you tested your lock with your own key and it opened. You have
-learned nothing about whether a burglar can open it, because you are not a burglar.
 
-## How it works
+def _load_spec(ref: str) -> AgentSpec:
+    """Accept 'invoice', 'targets.specs:INVOICE', or 'targets/specs.py:INVOICE'."""
+    if ":" in ref:
+        mod, attr = ref.split(":", 1)
+        mod = mod.removesuffix(".py").replace("/", ".")
+    else:
+        mod, attr = "targets.specs", ref.upper()
+    obj = getattr(importlib.import_module(mod), attr)
+    if not isinstance(obj, AgentSpec):
+        raise SystemExit(f"{ref} is not an AgentSpec")
+    return obj
 
-```
-seed inputs
-   -> mutate (deterministic metamorphic + structural ops; optional Groq semantic)
-   -> run the agent, record a behaviour signature (a hash, no model)
-   -> new signature? keep the input and mutate from it
-   -> oracles: crash | schema | metamorphic | judge (last resort)
-   -> delta-debug each failure to a minimal reproducer
-   -> cluster into failure classes, rank
-   -> emit a pytest file
-   -> optional: one Agent Orchestrator worker per class opens a fix PR
-```
 
-### The metamorphic oracle does the real work
+def _counter(spec_name: str, stats: RunStats, classes: int) -> Table:
+    t = Table.grid(padding=(0, 2))
+    t.add_column(justify="right", style="bold cyan")
+    t.add_column()
+    t.add_row("target", spec_name)
+    t.add_row("inputs tried", f"{stats.iterations}")
+    t.add_row("new behaviours", f"{stats.unique_behaviours}")
+    t.add_row("failure classes", f"[bold red]{classes}[/]" if classes else "0")
+    t.add_row("elapsed", f"{stats.wall_s:4.1f}s")
+    return t
 
-Most oracles need a correct answer to compare against. This one doesn't. It applies
-a transform that must not change the answer, then checks whether the answer changed.
-Rename a company from "Acme Corp" to "Åcme Corp" with a Unicode look-alike. Reorder
-the line items. Reformat "$1,240.00" as "USD 1240.00". If the booked GL account
-moves, that is a proven bug, and no ground truth was needed to prove it.
 
-The bathroom-scale analogy: you don't need to know someone's weight to know the
-scale is broken if it reads differently when they face north versus south.
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="blindspot", description=__doc__)
+    ap.add_argument("spec", help="agent spec: 'invoice', or 'module:ATTR'")
+    ap.add_argument("-n", "--iterations", type=int, default=600)
+    ap.add_argument("-p", "--parallelism", type=int, default=8)
+    ap.add_argument("-s", "--seed", type=int, default=0)
+    ap.add_argument("-g", "--granularity", choices=[g.value for g in Granularity], default="medium")
+    ap.add_argument("--judge-budget", type=int, default=30)
+    ap.add_argument("--semantic", action="store_true", help="add Groq semantic mutations (slower, ~2s/call)")
+    ap.add_argument("--no-judge", action="store_true", help="deterministic oracles only")
+    ap.add_argument("--time-budget", type=float, default=None, help="stop after N seconds")
+    ap.add_argument("--fix", action="store_true", help="dispatch one AO worker per failure class")
+    ap.add_argument("--fix-limit", type=int, default=0, help="cap how many fix workers --fix spawns (0 = all)")
+    ap.add_argument("--out", default="run", help="output directory root")
+    args = ap.parse_args(argv)
 
-Detection is a string comparison, so this is not a model grading a model.
+    import os
+    if not args.semantic:
+        os.environ["BLINDSPOT_NO_SEMANTIC"] = "1"
 
-### Where a model is allowed to run
+    traced = obs.init()
+    spec = _load_spec(args.spec)
+    cfg = FuzzConfig(
+        iterations=args.iterations, parallelism=args.parallelism, seed=args.seed,
+        granularity=Granularity(args.granularity), judge_budget=args.judge_budget,
+        time_budget_s=args.time_budget,
+    )
+    oracles = [o for o in default_oracles() if not (args.no_judge and o.name == "judge")]
 
-Two places, both optional and both off the critical path:
+    run_dir = Path(args.out) / f"{spec.name}-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}"
+    run_dir.mkdir(parents=True, exist_ok=True)
 
-- semantic mutation, to generate hostile-but-plausible inputs a random mutator
-  can't reach (Groq, opt in with `--semantic`; Groq throttles a burst, so a
-  semantic run is minutes not seconds)
-- the judge oracle, last resort only, for open-ended prose output where no
-  deterministic check applies (Groq, budgeted, confidence reported)
+    console.rule(f"[bold]Blindspot → {spec.name} agent")
+    console.print(f"seeds: {len(spec.seeds)}   oracles: {', '.join(o.name for o in oracles)}"
+                  + ("   [dim]· neatlogs on[/]" if traced else "") + "\n")
 
-The behaviour signature, the crash / schema / metamorphic oracles, the minimiser,
-the clustering and the emitter make zero model calls.
+    state = {"classes": 0}
+    with Live(_counter(spec.name, RunStats(), 0), console=console, refresh_per_second=12) as live:
+        def on_iter(stats: RunStats) -> None:
+            live.update(_counter(spec.name, stats, state["classes"]))
 
-### The minimiser keeps reproducers honest
+        result = run_fuzz(spec, cfg, oracles=oracles, on_iteration=on_iter)
+        classes = rank(cluster(result.findings))
+        state["classes"] = len(classes)
+        live.update(_counter(spec.name, result.stats, len(classes)))
 
-Delta debugging shrinks a failing input while the failure survives. For a
-metamorphic failure it shrinks the baseline while re-applying the transform at a
-site that still flips the answer, so it can never delete the renamed vendor and
-leave a reproducer that "works" for the wrong reason. A 70-character invoice
-collapses to `Acme Corp $12,500.00 2026-04-01`, and the transform that breaks it
-is one Unicode character.
+    for fc in classes:
+        minimise_class(fc, spec)
 
-### Agent Orchestrator is the fix loop, not a checkbox
+    _reveal(spec, result.stats, classes)
 
-`blindspot invoice --fix` spawns one AO worker per ranked failure class. Each gets
-the minimal reproducer and the exact invariant it violates, fixes the target agent,
-adds a regression test, and opens a PR. The mandatory-AO requirement became the
-architecture: a run with seven failure classes is seven worker sessions on the
-Kanban board.
+    test_path = run_dir / f"test_blindspot_{spec.name}.py"
+    try:
+        from blindspot.emit import emit_pytest
+        emit_pytest(classes, spec, test_path)
+        console.print(f"\n[green]wrote[/] {test_path}  ({_count_tests(classes)} regression tests)")
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"\n[yellow]emit skipped:[/] {exc}")
 
-## Results
+    try:
+        from blindspot.report import write_run
+        write_run(run_dir, result)
+        console.print(f"[green]wrote[/] {run_dir}/findings.jsonl")
+    except Exception:  # noqa: BLE001
+        _write_findings_fallback(run_dir, result)
 
-Two toy target agents, in two domains, each with planted blind spots:
+    if args.fix:
+        picked = classes[: args.fix_limit] if args.fix_limit else classes
+        _dispatch(picked, spec, str(test_path))
 
-- `targets/invoice_agent.py` — invoice reconciliation. Six blind spots: vendor
-  lookup with no Unicode or whitespace folding, first-name-span-wins vendor
-  selection, a capex threshold that misreads comma-separated thousands, a
-  US-only amount parser, an ISO-only date parser, a hard reject for closed periods.
-- `targets/support_agent.py` — customer support. Four blind spots: a cheerful
-  non-answer when the order number is missing, an invented status for unknown
-  orders, a naive refund-amount parse, no escalation above $500.
+    obs.flush()
+    return 0
 
-`scripts/metrics.py` fuzzes each buggy agent and its repaired twin under identical
-settings and scores both against one eval set. Invoice, 600 iterations per run,
-three RNG seeds, deterministic mutations:
 
-| metric                     |       before |        after |
-|----------------------------|-------------:|-------------:|
-| failure classes / run      |          6.0 |          0.0 |
-| findings / run             |          327 |            0 |
-| bugs / min                 |     ~150,000 |            0 |
-| accuracy on 18 evals       |          56% |         100% |
-| failure rate on evals      |          44% |           0% |
-| crash + timeout on evals   |            2 |            0 |
-| p95 latency                |      0.09 ms |      0.27 ms |
+def _reveal(spec: AgentSpec, stats: RunStats, classes: list) -> None:
+    console.print()
+    console.rule(f"[bold red]{len(classes)} failure classes the tests never covered")
+    for i, fc in enumerate(classes, 1):
+        ev = fc.minimal_repro.evidence
+        console.print(f"\n[bold]{i}. {fc.oracle}[/]  [dim]{fc.id}[/]   "
+                      f"[dim](rank {fc.rank_score:.0f}, {len(fc.members)} inputs)[/]")
+        console.print(f"   {fc.minimal_repro.summary}")
+        console.print(f"   [cyan]repro[/]  {fc.minimal_repro.input!r}")
+        if ev.get("mutant_input"):
+            console.print(f"   [cyan]after[/]  {ev['mutant_input']!r}   "
+                          f"[red]{ev.get('baseline_answer')} → {ev.get('mutant_answer')}[/]")
+        if ev.get("reduction_ratio"):
+            console.print(f"   [dim]shrunk {ev.get('original_len','?')} → "
+                          f"{ev.get('minimal_len','?')} chars ({ev['reduction_ratio']*100:.0f}% smaller)[/]")
+    console.print(
+        f"\n[dim]{stats.iterations} inputs · {stats.unique_behaviours} behaviours · "
+        f"{stats.bugs_per_min:.0f} bugs/min · {stats.llm_calls} llm calls · "
+        f"${stats.cost_usd:.4f}[/]"
+    )
 
-Columns map onto Track 1's own words: accuracy is booking correctness, reliability
-is the crash and timeout count, speed is classes per run and bugs per minute, cost
-is LLM spend (zero for the deterministic invoice run).
 
-The targets are toys, so the numbers are toy numbers. The tool is the artefact.
+def _count_tests(classes: list) -> int:
+    return sum(min(len({m.input for m in fc.members}), 8) for fc in classes) or 1
 
-### Validation gates
 
-Three checks, each with a kill criterion, run before trusting the pipeline:
+def _write_findings_fallback(run_dir: Path, result) -> None:
+    import json
+    with (run_dir / "findings.jsonl").open("w") as fh:
+        for f in result.findings:
+            fh.write(json.dumps({
+                "oracle": f.oracle, "signature": f.signature, "severity": f.severity,
+                "summary": f.summary, "input": f.input, "confidence": f.confidence,
+            }) + "\n")
+    (run_dir / "stats.json").write_text(json.dumps(result.stats.__dict__, default=str, indent=2))
 
-- **Gate 1, metamorphic precision** (`scripts/gate1_metamorphic.py`). Six
-  hand-written cosmetic relations over the invoice agent: 42 trials, 11 flagged
-  violations, all 11 genuine, zero false positives. Threshold was six genuine.
-- **Gate 2, coverage guidance** (`scripts/gate2_coverage.py`). Covered below.
-- **Gate 3, recall on planted bugs** (`scripts/gate3_recall.py`). The invoice
-  agent has six planted blind spots. Across eight RNG seeds the fuzzer catches
-  6/6 every time.
 
-### What we measured that didn't work
+def _dispatch(classes: list, spec: AgentSpec, test_path: str) -> None:
+    try:
+        from blindspot.ao import AOClient, dispatch_fixes
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[yellow]--fix unavailable:[/] {exc}")
+        return
+    ao = AOClient()
+    ids: list[str] = []
+    try:
+        ids = dispatch_fixes(classes, spec, ao, test_path=test_path)
+    except Exception as exc:  # noqa: BLE001 — partial dispatch is still useful
+        console.print(f"[yellow]dispatch interrupted after {len(ids)}:[/] {exc}")
+    if ids:
+        console.print(f"\n[green]dispatched {len(ids)} AO fix workers:[/] {', '.join(ids)}")
+    console.print("[dim]watch them on the AO board; merge the PRs they open[/]")
 
-The corpus is coverage-aware: it fingerprints each run's behaviour, dedupes
-findings by that fingerprint, and re-seeds from inputs that reached a new
-behaviour. AFL does the same thing for code coverage. We toggled it
-(`--guided` / `--no-guided`) and measured it in `scripts/gate2_coverage.py`.
 
-At this scale it does not beat a random baseline. Over eight to ten RNG seeds,
-guided found about 3.8 unique failure classes per short run and random found about
-4.4. The invoice agent only ever reaches five distinct behaviour signatures, so
-there is almost nothing for coverage guidance to exploit, and finer signature
-granularity changes nothing. On agents with deeper reachable state it may pay off.
-We haven't tested that, so we're not claiming it. The value here is the oracle
-stack, the coupled minimiser, and the AO loop.
-
-Reporting this straight is on-thesis. The whole project is an argument that an
-unmeasured claim is worthless.
-
-## Honest weaknesses
-
-- Metamorphic relations are hand-written. A sloppy relation produces a flood of
-  false alarms, which is worse than no tool.
-- The judge oracle is probabilistic. On the support agent it leaves a residual
-  class or two on the repaired agent that are false positives on adversarially
-  mutated inputs, not real regressions.
-- Without the metamorphic oracle, what's left is a crash fuzzer, which is 1998
-  technology with a model attached.
-- The target agents are toys. A real agent would give real improvement numbers.
-
-## Running it
-
-```bash
-uv sync
-export GROQ_API_KEY=...            # for semantic mutation and the judge oracle
-
-blindspot invoice                  # fast: deterministic mutations, live counters, emits a pytest file
-blindspot invoice --semantic       # add Groq semantic mutations (slower, more coverage)
-blindspot support --judge-budget 20          # the judge-oracle showcase
-blindspot invoice --fix --fix-limit 3        # dispatch AO fix workers
-
-python scripts/gate1_metamorphic.py   # metamorphic precision check
-python scripts/gate2_coverage.py      # guided vs random
-python scripts/metrics.py             # the before/after table
-python -m pytest -q                   # 31 tests
-```
-
-The AO daemon must be running for `--fix` (`AO_PORT=3011 ao daemon`).
-
-## Layout
-
-```
-blindspot/
-  types.py        the datatypes; no logic
-  signature.py    behaviour signature (a hash)
-  corpus.py       behaviour-space corpus, round-robin scheduler
-  mutate/         deterministic ops (each tagged answer-preserving) + Groq semantic
-  oracles/        crash, schema, metamorphic, judge; one check() each
-  runner.py       run_fuzz(spec, cfg) -> FuzzResult
-  minimise.py     delta debugging (test-first)
-  cluster.py      cluster / rank / minimise_class
-  emit.py         the regression pytest file
-  ao.py           AO daemon client + dispatch_fixes
-  report.py       JSONL persistence + metrics table
-  cli.py          blindspot <spec>
-targets/          two buggy agents + their repaired twins
-scripts/          the three validation gates and the metrics table
-```
-
-Adding a target agent is one `AgentSpec`: an entrypoint, some seeds, and up to
-three optional hooks (an output contract, an answer extractor for the metamorphic
-oracle, a judge rubric).
-
-## AO usage
-
-Every module except the design sketch was built through AO worker sessions. See
-`docs/AO_USAGE.md` for the session count and what each session produced.
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -53,7 +53,8 @@ Detection is a string comparison, so this is not a model grading a model.
 Two places, both optional and both off the critical path:
 
 - semantic mutation, to generate hostile-but-plausible inputs a random mutator
-  can't reach (Groq, opt in with `--semantic`)
+  can't reach (Groq, opt in with `--semantic`; Groq throttles a burst, so a
+  semantic run is minutes not seconds)
 - the judge oracle, last resort only, for open-ended prose output where no
   deterministic check applies (Groq, budgeted, confidence reported)
 
