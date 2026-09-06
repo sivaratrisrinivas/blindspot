@@ -1,8 +1,9 @@
 """Deterministic mutation ops. Each op declares whether it preserves the answer.
-answer_preserving ops are exactly the metamorphic relations."""
+The preserving ops ARE the metamorphic relations the metamorphic oracle checks."""
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from random import Random
 
@@ -20,53 +21,140 @@ def _op(name: str, preserving: bool):
     return deco
 
 
+_HOMOGLYPHS = {"A": "Α", "E": "Ε", "O": "Ο", "a": "а", "e": "е", "o": "о", "c": "с", "p": "р"}
+_CAP_WORD = re.compile(r"\b([A-Z][a-z]{2,})\b")
+_MONEY = re.compile(r"\$\s?([0-9][0-9,]*(?:\.[0-9]{2})?)")
+_ISO_DATE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
+_INT = re.compile(r"(?<![.\d])(\d{2,})(?![.\d])")
+
+_SYNONYMS = [
+    (r"\bInvoice from\b", "Bill from"),
+    (r"\bBill from\b", "Invoice from"),
+    (r"\bBilled by\b", "Invoice from"),
+    (r"\bamount\b", "total"),
+    (r"\bfor\b", "covering"),
+    (r"\bdated\b", "on"),
+]
+
+
 @_op("homoglyph_entity", preserving=True)
 def homoglyph_entity(text: str, rng: Random) -> str:
-    """Acme -> Åcme. Routing must not change under a cosmetic rename."""
-    raise NotImplementedError
+    """Swap one Latin letter in a Capitalised word for a Unicode look-alike.
+    Same entity to a human; a different byte string to an exact-match lookup."""
+    words = _CAP_WORD.findall(text)
+    if not words:
+        return text
+    target = rng.choice(words)
+    for i, ch in enumerate(target):
+        if ch in _HOMOGLYPHS:
+            swapped = target[:i] + _HOMOGLYPHS[ch] + target[i + 1:]
+            return text.replace(target, swapped, 1)
+    return text
 
 
 @_op("reorder_lines", preserving=True)
 def reorder_lines(text: str, rng: Random) -> str:
-    raise NotImplementedError
+    lines = text.splitlines()
+    if len(lines) < 2:
+        return text
+    shuffled = lines[:]
+    rng.shuffle(shuffled)
+    return "\n".join(shuffled) if shuffled != lines else text
 
 
 @_op("reformat_currency", preserving=True)
 def reformat_currency(text: str, rng: Random) -> str:
-    raise NotImplementedError
+    """'$1,240.00' <-> 'USD 1240.00'. Identical monetary value."""
+    def repl(m: re.Match) -> str:
+        return "USD " + m.group(1).replace(",", "")
+
+    return _MONEY.sub(repl, text, count=1)
 
 
 @_op("reformat_date", preserving=True)
 def reformat_date(text: str, rng: Random) -> str:
-    raise NotImplementedError
+    """ISO '2026-03-01' -> '1 March 2026'. Same calendar day."""
+    months = ["January", "February", "March", "April", "May", "June", "July",
+              "August", "September", "October", "November", "December"]
+
+    def repl(m: re.Match) -> str:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if not (1 <= mo <= 12 and 1 <= d <= 31):
+            return m.group(0)
+        return f"{d} {months[mo - 1]} {y}"
+
+    return _ISO_DATE.sub(repl, text, count=1)
 
 
 @_op("inject_whitespace", preserving=True)
 def inject_whitespace(text: str, rng: Random) -> str:
-    raise NotImplementedError
+    spots = [i for i, ch in enumerate(text) if ch == " "]
+    if not spots:
+        return text
+    i = rng.choice(spots)
+    return text[:i] + "  " + text[i + 1:]
 
 
 @_op("synonym_swap", preserving=True)
 def synonym_swap(text: str, rng: Random) -> str:
-    raise NotImplementedError
+    pat, sub = rng.choice(_SYNONYMS)
+    new = re.sub(pat, sub, text, count=1)
+    return new
 
 
 @_op("pad_context", preserving=True)
 def pad_context(text: str, rng: Random) -> str:
-    raise NotImplementedError
+    pads = [
+        " Please file under Q1 procurement.",
+        " Thanks in advance for processing this promptly.",
+        " Note: this supersedes any earlier draft.",
+        " CC: accounts payable.",
+    ]
+    return text + rng.choice(pads)
 
 
 @_op("bitflip_digit", preserving=False)
 def bitflip_digit(text: str, rng: Random) -> str:
-    raise NotImplementedError
+    digits = [i for i, ch in enumerate(text) if ch.isdigit()]
+    if not digits:
+        return text
+    i = rng.choice(digits)
+    new_d = str((int(text[i]) + rng.randint(1, 8)) % 10)
+    return text[:i] + new_d + text[i + 1:]
 
 
 @_op("truncate", preserving=False)
 def truncate(text: str, rng: Random) -> str:
-    raise NotImplementedError
+    words = text.split()
+    if len(words) < 4:
+        return text
+    keep = rng.randint(2, max(2, len(words) - 2))
+    return " ".join(words[:keep])
 
 
 class DeterministicMutator:
+    """Applies 1-3 random ops per mutant; answer_preserving is the AND of the
+    applied ops' flags. Ops that no-op on a given seed are dropped from the lineage."""
+
+    def __init__(self, max_ops: int = 3) -> None:
+        self.max_ops = max_ops
+
     def mutate(self, seed: str, *, rng: Random) -> Iterator[Mutant]:
-        """Apply 1-3 random ops; answer_preserving = AND of the chosen ops' flags."""
-        raise NotImplementedError
+        names = list(OPS)
+        while True:
+            k = rng.randint(1, self.max_ops)
+            chosen = rng.sample(names, k=min(k, len(names)))
+            text = seed
+            applied: list[str] = []
+            preserving = True
+            for name in chosen:
+                fn, keep = OPS[name]
+                nxt = fn(text, rng)
+                if nxt == text:
+                    continue
+                text = nxt
+                applied.append(name)
+                preserving = preserving and keep
+            if not applied or text == seed:
+                continue
+            yield Mutant(text=text, lineage=tuple(applied), answer_preserving=preserving)

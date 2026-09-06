@@ -1,5 +1,5 @@
-"""Oracle protocol lives in blindspot.types. This package holds the concrete oracles
-and the fan-out that runs them over one iteration."""
+"""Concrete oracles and the fan-out that runs them over one iteration.
+The Oracle protocol itself lives in blindspot.types."""
 
 from __future__ import annotations
 
@@ -9,18 +9,28 @@ from blindspot.oracles.metamorphic import MetamorphicOracle
 from blindspot.oracles.schema import SchemaOracle
 from blindspot.types import Finding, Oracle, OracleContext
 
+__all__ = [
+    "CrashOracle", "SchemaOracle", "MetamorphicOracle", "JudgeOracle",
+    "default_oracles", "run_oracles",
+]
+
 
 def default_oracles(*, judge: JudgeOracle | None = None) -> list[Oracle]:
     """Cheapest / most-certain first. Judge last, and only if nothing proved it."""
-    return [
-        CrashOracle(),
-        SchemaOracle(),
-        MetamorphicOracle(),
-        judge or JudgeOracle(),
-    ]
+    return [CrashOracle(), SchemaOracle(), MetamorphicOracle(), judge or JudgeOracle()]
 
 
 def run_oracles(oracles: list[Oracle], ctx: OracleContext) -> list[Finding]:
-    """Run each oracle; if a deterministic oracle fires, skip the judge for this
-    iteration (a model must not opine on what was already proven)."""
-    raise NotImplementedError
+    """Run each oracle in order. If any deterministic oracle fires, the judge is
+    skipped for this iteration — a model must not opine on what was already proven."""
+    findings: list[Finding] = []
+    proven = False
+    for oracle in oracles:
+        if not oracle.deterministic and proven:
+            continue
+        got = oracle.check(ctx)
+        if got:
+            findings.extend(got)
+            if oracle.deterministic:
+                proven = True
+    return findings

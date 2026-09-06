@@ -1,30 +1,61 @@
-"""The fuzz loop. Public entrypoint: run_fuzz(spec, cfg) -> FuzzResult."""
+"""The fuzz loop. Public entrypoint: run_fuzz(spec, cfg) -> FuzzResult.
+
+seed (round-robin) -> mutate -> run agent (thread pool) -> behaviour signature ->
+corpus.add (keep if novel) -> run oracles -> collect findings.
+Baseline run computed once per seed and cached, only when an active oracle needs it."""
 
 from __future__ import annotations
 
+import concurrent.futures as cf
+import os
 import time
+from collections.abc import Callable
 from random import Random
 
 from blindspot.corpus import Corpus
-from blindspot.mutate import CompositeMutator
+from blindspot.llm import LLM, FUZZ_MODEL
+from blindspot.mutate import CompositeMutator, DeterministicMutator, SemanticMutator
 from blindspot.oracles import default_oracles, run_oracles
 from blindspot.signature import behaviour_signature
 from blindspot.types import (
     AgentRun,
     AgentSpec,
     Budget,
+    Finding,
     FuzzConfig,
     FuzzResult,
+    Mutant,
     Oracle,
     OracleContext,
     RunStats,
 )
 
+_AGENT_TIMEOUT_S = 10.0
+
 
 def _run_agent(spec: AgentSpec, text: str) -> AgentRun:
-    """Call spec.entrypoint with a wall-clock timeout; convert exceptions/timeouts
-    into AgentRun(terminal=...) rather than propagating."""
-    raise NotImplementedError
+    """Call the target with a wall-clock timeout. Exceptions and timeouts become an
+    AgentRun with the matching terminal state rather than propagating."""
+    t0 = time.perf_counter()
+    try:
+        with cf.ThreadPoolExecutor(max_workers=1) as ex:
+            return ex.submit(spec.entrypoint, text).result(timeout=_AGENT_TIMEOUT_S)
+    except cf.TimeoutError:
+        return AgentRun(input=text, output=None, tool_calls=(), terminal="timeout",
+                        latency_s=time.perf_counter() - t0)
+    except Exception as exc:  # noqa: BLE001 — a target that throws is a crash finding
+        return AgentRun(input=text, output=None, tool_calls=(), terminal="error",
+                        error_type=type(exc).__name__, latency_s=time.perf_counter() - t0)
+
+
+def _build_mutator(cfg: FuzzConfig) -> CompositeMutator:
+    sem = None
+    if os.environ.get("GROQ_API_KEY") and not os.environ.get("BLINDSPOT_NO_SEMANTIC"):
+        try:
+            sem = SemanticMutator(LLM(FUZZ_MODEL))
+        except Exception:  # noqa: BLE001 — degrade to deterministic-only
+            sem = None
+    return CompositeMutator(DeterministicMutator(), sem)
 
 
 def run_fuzz(
@@ -32,9 +63,81 @@ def run_fuzz(
     cfg: FuzzConfig,
     *,
     oracles: list[Oracle] | None = None,
-    on_iteration=None,        # callback(stats) for the CLI live counters
+    on_iteration: Callable[[RunStats], None] | None = None,
 ) -> FuzzResult:
-    """Round-robin a seed -> mutate -> run agent (thread pool, cfg.parallelism wide)
-    -> signature -> corpus.add -> run active oracles -> collect findings.
-    Baseline run computed once per seed and cached when any active oracle needs it."""
-    raise NotImplementedError
+    rng = Random(cfg.seed)
+    corpus = Corpus(spec.seeds)
+    oracles = oracles or default_oracles()
+    needs_baseline = any(o.needs_baseline for o in oracles)
+    budget = Budget(cfg.judge_budget)
+    mutator = _build_mutator(cfg)
+
+    findings: list[Finding] = []
+    stats = RunStats(per_oracle={o.name: 0 for o in oracles})
+    baseline_cache: dict[str, AgentRun] = {}
+    streams: dict[str, object] = {}
+    deadline = None if cfg.time_budget_s is None else time.perf_counter() + cfg.time_budget_s
+    t_start = time.perf_counter()
+
+    def mutant_for(seed: str) -> Mutant:
+        it = streams.get(seed)
+        if it is None:
+            it = mutator.mutate(seed, rng=rng)
+            streams[seed] = it
+        return next(it)  # type: ignore[arg-type]
+
+    for i in range(cfg.iterations):
+        if deadline is not None and time.perf_counter() >= deadline:
+            break
+        seed = corpus.next_seed()
+        mutant = mutant_for(seed)
+
+        run = _run_agent(spec, mutant.text)
+        sig = behaviour_signature(run, granularity=cfg.granularity)
+        novel = corpus.add(mutant.text, sig)
+
+        seed_run = None
+        if needs_baseline:
+            seed_run = baseline_cache.get(seed)
+            if seed_run is None:
+                seed_run = _run_agent(spec, seed)
+                baseline_cache[seed] = seed_run
+
+        ctx = OracleContext(
+            seed=seed, seed_run=seed_run, mutant=mutant, mutant_run=run,
+            agent=spec.entrypoint, spec=spec, budget=budget,
+        )
+        got = run_oracles(oracles, ctx)
+        for f in got:
+            findings.append(f)
+            stats.per_oracle[f.oracle] = stats.per_oracle.get(f.oracle, 0) + 1
+
+        stats.iterations = i + 1
+        stats.unique_behaviours = len(corpus.signatures)
+        stats.findings_total = len(findings)
+        stats.wall_s = time.perf_counter() - t_start
+        if novel and on_iteration:
+            on_iteration(stats)
+        elif on_iteration and (i % 25 == 0):
+            on_iteration(stats)
+
+    llm_calls, cost = _llm_totals(mutator, oracles)
+    stats.llm_calls = llm_calls
+    stats.cost_usd = cost
+    stats.wall_s = time.perf_counter() - t_start
+    return FuzzResult(
+        findings=findings,
+        corpus=corpus.entries(),
+        signatures_seen=corpus.signatures,
+        stats=stats,
+    )
+
+
+def _llm_totals(mutator: CompositeMutator, oracles: list[Oracle]) -> tuple[int, float]:
+    calls, cost = 0, 0.0
+    sem = getattr(mutator, "_sem", None)
+    for holder in (getattr(sem, "_llm", None), *(getattr(o, "_llm", None) for o in oracles)):
+        if holder is not None:
+            calls += getattr(holder, "calls", 0)
+            cost += getattr(holder, "cost_usd", 0.0)
+    return calls, cost
