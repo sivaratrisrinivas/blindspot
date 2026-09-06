@@ -22,17 +22,15 @@ nothing about whether a burglar can open it, because you are not a burglar.
 
 ## How it works
 
-```
-seed inputs
-   -> mutate (deterministic metamorphic + structural ops; optional LLM semantic)
-   -> run the agent, record a behaviour signature (a hash, no model)
-   -> new signature? keep the input and mutate from it
-   -> oracles: crash | schema | metamorphic | judge (last resort)
-   -> delta-debug each failure to a minimal reproducer
-   -> cluster into failure classes, rank
-   -> emit a pytest file
-   -> optional: one Agent Orchestrator worker per class opens a fix PR
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/architecture-dark.svg">
+  <img alt="Blindspot pipeline: a seed corpus feeds a mutator, the mutant runs against the target agent, and the run is hashed into a behaviour signature; a novel signature sends the input back to the corpus as a new seed. The run passes through the crash, schema, metamorphic and judge oracles. Findings are clustered, shrunk by delta debugging, and emitted as a pytest file and one Agent Orchestrator worker per failure class. An optional LLM provider lane touches only semantic mutation and the judge oracle." src="docs/architecture-light.svg" width="100%">
+</picture>
+
+Everything in the main column is a hash, a string comparison or a regex, so the loop
+makes zero model calls. The amber lane is the only place a model runs, it touches
+exactly two points, and both are optional. Regenerate the diagram with
+`python scripts/build_diagram.py`.
 
 ### The metamorphic oracle does the real work
 
@@ -212,7 +210,9 @@ blindspot/
   report.py       JSONL persistence
   cli.py          blindspot <spec>
 targets/          two buggy agents + their repaired twins
-scripts/          the three validation gates, the metrics table, the pipeline verifier
+scripts/          the three validation gates, the metrics table, the pipeline
+                  verifier, the diagram generator
+docs/             DESIGN.md, AO_USAGE.md, SUBMISSION.md, the diagram SVGs
 ```
 
 Adding a target agent is one `AgentSpec`: an entrypoint, some seeds, and up to
