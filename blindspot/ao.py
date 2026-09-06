@@ -17,23 +17,28 @@ _TERMINAL = ("mergeable", "blocked", "conflicted")
 class AOClient:
     def __init__(self, base_url: str | None = None, project: str = "blindspot") -> None:
         base_url = base_url or f"http://localhost:{os.environ.get('AO_PORT', '3011')}"
-        self._c = httpx.Client(base_url=base_url, timeout=30.0)
+        self._c = httpx.Client(base_url=base_url, timeout=httpx.Timeout(90.0, connect=10.0))
         self.project = project
 
     def spawn_worker(self, name: str, prompt: str, *, model: str = "sonnet") -> str:
-        """POST /api/v1/sessions -> session id."""
-        resp = self._c.post(
-            "/api/v1/sessions",
-            json={
-                "projectId": self.project,
-                "harness": "claude-code",
-                "kind": "worker",
-                "model": model,
-                "displayName": name[:20],
-                "prompt": prompt,
-            },
-        )
-        return resp.json()["session"]["id"]
+        """POST /api/v1/sessions -> session id. Retries once on a slow daemon."""
+        body = {
+            "projectId": self.project,
+            "harness": "claude-code",
+            "kind": "worker",
+            "model": model,
+            "displayName": name[:20],
+            "prompt": prompt,
+        }
+        for attempt in range(2):
+            try:
+                resp = self._c.post("/api/v1/sessions", json=body)
+                return resp.json()["session"]["id"]
+            except (httpx.ReadTimeout, httpx.RemoteProtocolError):
+                if attempt:
+                    raise
+                time.sleep(5)
+        raise RuntimeError("unreachable")
 
     def send(self, sid: str, msg: str) -> None:
         """POST /api/v1/sessions/{id}/send."""
@@ -78,6 +83,7 @@ def dispatch_fixes(
     ao: AOClient,
     *,
     test_path: str | None = None,
+    spawn_gap_s: float = 12.0,
 ) -> list[str]:
     """One AO worker per failure class. The prompt is self-contained — the emitted
     suite lives under run/ (gitignored) and is not on the worker's branch, so the
@@ -85,7 +91,9 @@ def dispatch_fixes(
     regression test under tests/. Returns the spawned session ids."""
     module = f"targets/{spec.name}_agent.py"
     ids: list[str] = []
-    for fc in classes:
+    for i, fc in enumerate(classes):
+        if i:
+            time.sleep(spawn_gap_s)  # the daemon drops agents spawned back-to-back
         repro = fc.minimal_repro.input
         lines = [
             f"Blindspot found a failure class in the {spec.name} agent ({module}).",

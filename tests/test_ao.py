@@ -148,7 +148,7 @@ def test_dispatch_fixes_spawns_one_worker_per_class_with_distinct_names():
     class _Spec:
         name = "invoice"
 
-    ids = dispatch_fixes(classes, _Spec(), _AO())
+    ids = dispatch_fixes(classes, _Spec(), _AO(), spawn_gap_s=0)
 
     assert ids == ["session-1", "session-2", "session-3"]
     names = [n for n, _ in calls]

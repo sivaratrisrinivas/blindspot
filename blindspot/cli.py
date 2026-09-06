@@ -165,8 +165,14 @@ def _dispatch(classes: list, spec: AgentSpec, test_path: str) -> None:
         console.print(f"[yellow]--fix unavailable:[/] {exc}")
         return
     ao = AOClient()
-    ids = dispatch_fixes(classes, spec, ao, test_path=test_path)
-    console.print(f"\n[green]dispatched {len(ids)} AO fix workers:[/] {', '.join(ids)}")
+    ids: list[str] = []
+    try:
+        ids = dispatch_fixes(classes, spec, ao, test_path=test_path)
+    except Exception as exc:  # noqa: BLE001 — partial dispatch is still useful
+        console.print(f"[yellow]dispatch interrupted after {len(ids)}:[/] {exc}")
+    if ids:
+        console.print(f"\n[green]dispatched {len(ids)} AO fix workers:[/] {', '.join(ids)}")
+    console.print("[dim]watch them on the AO board; merge the PRs they open[/]")
 
 
 if __name__ == "__main__":
