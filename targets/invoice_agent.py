@@ -132,7 +132,11 @@ def run(text: str) -> AgentRun:
         vendor = _parse_vendor(text)
         calls.append(ToolCall("parse_vendor", {"vendor": vendor}, ok=vendor != "UNKNOWN"))
 
-        y, mo, d = _parse_date(text)
+        try:
+            y, mo, d = _parse_date(text)
+        except DateFormatError:
+            return done("I can't book this invoice without a readable date — "
+                        "please resend with the invoice date.", "refused")
         calls.append(ToolCall("check_period", {"year": y, "month": mo}, ok=True))
 
         amount = _parse_amount(text)
