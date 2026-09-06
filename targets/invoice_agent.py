@@ -132,7 +132,11 @@ def run(text: str) -> AgentRun:
         vendor = _parse_vendor(text)
         calls.append(ToolCall("parse_vendor", {"vendor": vendor}, ok=vendor != "UNKNOWN"))
 
-        y, mo, d = _parse_date(text)
+        try:
+            y, mo, d = _parse_date(text)
+        except PeriodClosedError as exc:
+            calls.append(ToolCall("check_period", {"year": None, "month": None}, ok=False))
+            return done(f"Refused: {exc}", "refused", err="PeriodClosedError")
         calls.append(ToolCall("check_period", {"year": y, "month": mo}, ok=True))
 
         amount = _parse_amount(text)
