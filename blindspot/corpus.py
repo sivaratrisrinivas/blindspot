@@ -7,9 +7,10 @@ from collections import deque
 
 
 class Corpus:
-    def __init__(self, seeds: list[str]) -> None:
+    def __init__(self, seeds: list[str], *, guided: bool = True) -> None:
         if not seeds:
             raise ValueError("corpus needs at least one seed")
+        self._guided = guided
         self._entries: list[str] = list(dict.fromkeys(seeds))  # dedupe, keep order
         self._signatures: set[str] = set()
         self._queue: deque[str] = deque(self._entries)
@@ -19,7 +20,7 @@ class Corpus:
         if sig in self._signatures:
             return False
         self._signatures.add(sig)
-        if text not in self._entries:
+        if self._guided and text not in self._entries:
             self._entries.append(text)
             self._queue.append(text)
         return True

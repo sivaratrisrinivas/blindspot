@@ -109,6 +109,7 @@ class FuzzConfig:
     seed: int = 0
     judge_budget: int = 40
     time_budget_s: float | None = None
+    guided: bool = True
 
 
 @dataclass

@@ -83,7 +83,7 @@ def run_fuzz(
     on_iteration: Callable[[RunStats], None] | None = None,
 ) -> FuzzResult:
     rng = Random(cfg.seed)
-    corpus = Corpus(spec.seeds)
+    corpus = Corpus(spec.seeds, guided=cfg.guided)
     oracles = oracles or default_oracles()
     needs_baseline = any(o.needs_baseline for o in oracles)
     budget = Budget(cfg.judge_budget)
