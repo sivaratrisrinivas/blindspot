@@ -15,12 +15,14 @@ Planted blind spots, each a failure *class* Blindspot should rediscover on its o
      comma-free "USD 10000.00" hits it.             [metamorphic: reformat_currency]
   4. amount parser is US-format only; European "1.234,56" and mangled amounts raise.
                                                      [crash: AmountParseError]
-  5. date parser is ISO-only; "1 March 2026" raises. [crash: DateFormatError]
+  5. date parser accepts ISO plus common English month formats ("1 March 2026",
+     "March 2026"); a total absence of any date falls back to today's period.
   6. anything dated before 2026-01-01 is a hard reject. [crash: PeriodClosedError]
 """
 
 from __future__ import annotations
 
+import datetime
 import re
 import time
 
@@ -54,6 +56,15 @@ CAPEX_THRESHOLD = 10_000
 _MONEY = re.compile(r"(?:USD|US\$|\$)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)|([0-9][0-9,]*\.[0-9]{2})\s*USD", re.I)
 _FIRST_DIGITS = re.compile(r"([0-9]+)")
 _ISO_DATE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
+_MONTH_NAMES = (
+    "january|february|march|april|may|june|july|"
+    "august|september|october|november|december"
+)
+_DMY_DATE = re.compile(
+    rf"\b(\d{{1,2}})\s+({_MONTH_NAMES})\s+(\d{{4}})\b", re.I)
+_MDY_DATE = re.compile(
+    rf"\b({_MONTH_NAMES})\s+(\d{{1,2}})(?:st|nd|rd|th)?,?\s+(\d{{4}})\b", re.I)
+_MY_DATE = re.compile(rf"\b({_MONTH_NAMES})\s+(\d{{4}})\b", re.I)
 _NAME_HINT = re.compile(r"(?:invoice from|billed by|bill from|bill|from|vendor)\s*:?\s*([^\n,.;]+)", re.I)
 _MONTHS = {m: i for i, m in enumerate(
     ["january", "february", "march", "april", "may", "june", "july",
@@ -78,12 +89,31 @@ def _rough_amount(text: str) -> int:
     return int(m.group(1)) if m else 0
 
 
-def _parse_date(text: str) -> tuple[int, int, int]:
-    """ISO-only (blind spot #5). Then reject closed periods (blind spot #6)."""
+def _find_date(text: str) -> tuple[int, int, int] | None:
+    """ISO plus common English month formats. None if the text names no date."""
     m = _ISO_DATE.search(text)
-    if not m:
-        raise DateFormatError(f"no ISO (YYYY-MM-DD) date in {text!r}")
-    y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if m:
+        return int(m.group(1)), int(m.group(2)), int(m.group(3))
+    m = _DMY_DATE.search(text)
+    if m:
+        return int(m.group(3)), _MONTHS[m.group(2).lower()], int(m.group(1))
+    m = _MDY_DATE.search(text)
+    if m:
+        return int(m.group(3)), _MONTHS[m.group(1).lower()], int(m.group(2))
+    m = _MY_DATE.search(text)
+    if m:
+        return int(m.group(2)), _MONTHS[m.group(1).lower()], 1
+    return None
+
+
+def _parse_date(text: str) -> tuple[int, int, int]:
+    """Parse a date, defaulting to today when none is given, then reject closed
+    periods (blind spot #6 is left intact)."""
+    found = _find_date(text)
+    if found is None:
+        today = datetime.date.today()
+        return today.year, today.month, today.day
+    y, mo, d = found
     if (y, mo, d) < (2026, 1, 1):
         raise PeriodClosedError(f"{y:04d}-{mo:02d}-{d:02d} is in a closed period")
     return y, mo, d
