@@ -17,6 +17,7 @@ from blindspot import obs
 from blindspot.ao import AOClient, dispatch_fixes
 from blindspot.cluster import cluster, minimise_class, rank
 from blindspot.emit import MAX_PARAMS, emit_pytest
+from blindspot.llm import DEFAULT_PROVIDER, PROVIDERS
 from blindspot.oracles import default_oracles
 from blindspot.report import write_run
 from blindspot.runner import run_fuzz
@@ -57,7 +58,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("-s", "--seed", type=int, default=0)
     ap.add_argument("-g", "--granularity", choices=[g.value for g in Granularity], default="medium")
     ap.add_argument("--judge-budget", type=int, default=30)
-    ap.add_argument("--semantic", action="store_true", help="add Groq semantic mutations (slower, ~2s/call)")
+    ap.add_argument("--provider", choices=sorted(PROVIDERS), default=DEFAULT_PROVIDER,
+                    help="which API serves semantic mutation and the judge oracle")
+    ap.add_argument("--semantic", action="store_true", help="add LLM semantic mutations (slower, ~2s/call)")
     ap.add_argument("--no-judge", action="store_true", help="deterministic oracles only")
     ap.add_argument("--time-budget", type=float, default=None, help="stop after N seconds")
     ap.add_argument("--fix", action="store_true", help="dispatch one AO worker per failure class")
@@ -73,15 +76,17 @@ def main(argv: list[str] | None = None) -> int:
     cfg = FuzzConfig(
         iterations=args.iterations, seed=args.seed,
         granularity=Granularity(args.granularity), judge_budget=args.judge_budget,
-        time_budget_s=args.time_budget,
+        time_budget_s=args.time_budget, provider=args.provider,
     )
-    oracles = [o for o in default_oracles() if not (args.no_judge and o.name == "judge")]
+    oracles = [o for o in default_oracles(provider_name=args.provider)
+               if not (args.no_judge and o.name == "judge")]
 
     run_dir = Path(args.out) / f"{spec.name}-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
     console.rule(f"[bold]Blindspot → {spec.name} agent")
     console.print(f"seeds: {len(spec.seeds)}   oracles: {', '.join(o.name for o in oracles)}"
+                  + f"   provider: {args.provider}"
                   + ("   [dim]· neatlogs on[/]" if traced else "") + "\n")
 
     state = {"classes": 0}
@@ -129,10 +134,10 @@ def _reveal(spec: AgentSpec, stats: RunStats, classes: list) -> None:
         if ev.get("reduction_ratio"):
             console.print(f"   [dim]shrunk {ev.get('original_len','?')} → "
                           f"{ev.get('minimal_len','?')} chars ({ev['reduction_ratio']*100:.0f}% smaller)[/]")
+    spend = f"${stats.cost_usd:.4f}" if stats.cost_known else "cost unpublished"
     console.print(
         f"\n[dim]{stats.iterations} inputs · {stats.unique_behaviours} behaviours · "
-        f"{stats.bugs_per_min:.0f} bugs/min · {stats.llm_calls} llm calls · "
-        f"${stats.cost_usd:.4f}[/]"
+        f"{stats.bugs_per_min:.0f} bugs/min · {stats.llm_calls} llm calls · {spend}[/]"
     )
 
 

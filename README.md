@@ -53,13 +53,27 @@ Detection is a string comparison, so this is not a model grading a model.
 Two places, both optional and both off the critical path:
 
 - semantic mutation, to generate hostile-but-plausible inputs a random mutator
-  can't reach (Groq, opt in with `--semantic`; Groq throttles a burst, so a
+  can't reach (opt in with `--semantic`; the provider throttles a burst, so a
   semantic run is minutes not seconds)
 - the judge oracle, last resort only, for open-ended prose output where no
-  deterministic check applies (Groq, budgeted, confidence reported)
+  deterministic check applies (budgeted, confidence reported)
 
 The behaviour signature, the crash / schema / metamorphic oracles, the minimiser,
 the clustering and the emitter make zero model calls.
+
+Both places go through one provider table in `blindspot/llm.py`. Providers are
+OpenAI-compatible, so a provider is a row (base URL, key env var, the two models,
+published prices) rather than a branch, and `--provider` picks one. Groq is the
+default. TensorMux is the second row and serves the same two roles:
+
+```bash
+blindspot support --provider tensormux --judge-budget 5
+blindspot invoice --provider tensormux --semantic --no-judge
+```
+
+TensorMux publishes no per-token price for the model it serves, so a run through
+it reports its call count and prints `cost unpublished` instead of a dollar figure
+nobody measured.
 
 ### The minimiser keeps reproducers honest
 
@@ -155,17 +169,21 @@ unmeasured claim is worthless.
 
 ```bash
 uv sync
-export GROQ_API_KEY=...            # for semantic mutation and the judge oracle
+export GROQ_API_KEY=...            # semantic mutation and the judge oracle
+export TENSORMUX_API_KEY=...       # optional, for --provider tensormux
 
 blindspot invoice                  # fast: deterministic mutations, live counters, emits a pytest file
-blindspot invoice --semantic       # add Groq semantic mutations (slower, more coverage)
-blindspot support --judge-budget 20          # the judge-oracle showcase
-blindspot invoice --fix --fix-limit 3        # dispatch AO fix workers
+blindspot invoice --semantic       # add semantic mutations (slower, more coverage)
+blindspot support --judge-budget 20                    # the judge-oracle showcase
+blindspot support --provider tensormux --judge-budget 5  # same, through TensorMux
+blindspot invoice --fix --fix-limit 3                  # dispatch AO fix workers
 
 python scripts/gate1_metamorphic.py   # metamorphic precision check
 python scripts/gate2_coverage.py      # guided vs random
+python scripts/gate3_recall.py        # recall on the planted bugs
 python scripts/metrics.py             # the before/after table
-python -m pytest -q                   # 31 tests
+python scripts/verify_pipeline.py     # all 10 stages, including the CLI
+python -m pytest -q                   # 30 tests
 ```
 
 The AO daemon must be running for `--fix` (`AO_PORT=3011 ao daemon`).
@@ -183,8 +201,9 @@ blindspot/
   minimise.py     delta debugging (test-first)
   cluster.py      cluster / rank / minimise_class
   emit.py         the regression pytest file
+  llm.py          the provider table (Groq, TensorMux) + one OpenAI-compatible client
   ao.py           AO daemon client + dispatch_fixes
-  report.py       JSONL persistence + metrics table
+  report.py       JSONL persistence
   cli.py          blindspot <spec>
 targets/          two buggy agents + their repaired twins
 scripts/          the three validation gates and the metrics table

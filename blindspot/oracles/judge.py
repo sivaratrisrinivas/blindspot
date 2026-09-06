@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import re
 
-from blindspot.llm import LLM, JUDGE_MODEL
+from blindspot.llm import DEFAULT_PROVIDER, LLM, provider
 from blindspot.types import Finding, OracleContext
 
 SYSTEM = (
@@ -25,12 +25,14 @@ class JudgeOracle:
     deterministic = False
     needs_baseline = False
 
-    def __init__(self, llm: LLM | None = None) -> None:
+    def __init__(self, llm: LLM | None = None, *, provider_name: str = DEFAULT_PROVIDER) -> None:
         self._llm = llm  # built lazily on first use if None
+        self._provider_name = provider_name
 
     def _get_llm(self) -> LLM:
         if self._llm is None:
-            self._llm = LLM(JUDGE_MODEL)
+            p = provider(self._provider_name)
+            self._llm = LLM(p, p.judge_model)
         return self._llm
 
     def check(self, ctx: OracleContext) -> list[Finding]:

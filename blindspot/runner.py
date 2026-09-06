@@ -15,7 +15,7 @@ from random import Random
 
 from blindspot import obs
 from blindspot.corpus import Corpus
-from blindspot.llm import LLM, FUZZ_MODEL
+from blindspot.llm import LLM, has_key, provider
 from blindspot.mutate import CompositeMutator, DeterministicMutator, SemanticMutator
 from blindspot.oracles import default_oracles, run_oracles
 from blindspot.signature import behaviour_signature
@@ -68,9 +68,10 @@ def _run_agent(spec: AgentSpec, text: str) -> AgentRun:
 
 def _build_mutator(cfg: FuzzConfig) -> CompositeMutator:
     sem = None
-    if os.environ.get("GROQ_API_KEY") and not os.environ.get("BLINDSPOT_NO_SEMANTIC"):
+    p = provider(cfg.provider)
+    if has_key(p) and not os.environ.get("BLINDSPOT_NO_SEMANTIC"):
         try:
-            sem = SemanticMutator(LLM(FUZZ_MODEL))
+            sem = SemanticMutator(LLM(p, p.fuzz_model))
         except Exception:  # noqa: BLE001 — degrade to deterministic-only
             sem = None
     return CompositeMutator(DeterministicMutator(), sem)
@@ -140,9 +141,7 @@ def run_fuzz(
         elif on_iteration and (i % 25 == 0):
             on_iteration(stats)
 
-    llm_calls, cost = _llm_totals(mutator, oracles)
-    stats.llm_calls = llm_calls
-    stats.cost_usd = cost
+    stats.llm_calls, stats.cost_usd, stats.cost_known = _llm_totals(mutator, oracles)
     stats.wall_s = time.perf_counter() - t_start
     return FuzzResult(
         findings=findings,
@@ -152,11 +151,15 @@ def run_fuzz(
     )
 
 
-def _llm_totals(mutator: CompositeMutator, oracles: list[Oracle]) -> tuple[int, float]:
-    calls, cost = 0, 0.0
+def _llm_totals(mutator: CompositeMutator, oracles: list[Oracle]) -> tuple[int, float, bool]:
+    """Calls and spend across every LLM the run touched. cost_known goes False as
+    soon as one of them billed on a model with no published price."""
+    calls, cost, known = 0, 0.0, True
     sem = getattr(mutator, "_sem", None)
-    for holder in (getattr(sem, "_llm", None), *(getattr(o, "_llm", None) for o in oracles)):
-        if holder is not None:
-            calls += getattr(holder, "calls", 0)
-            cost += getattr(holder, "cost_usd", 0.0)
-    return calls, cost
+    for llm in (getattr(sem, "_llm", None), *(getattr(o, "_llm", None) for o in oracles)):
+        if llm is None or not llm.calls:
+            continue
+        calls += llm.calls
+        cost += llm.cost_usd
+        known = known and llm.priced
+    return calls, cost, known

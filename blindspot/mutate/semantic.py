@@ -9,7 +9,7 @@ from random import Random
 
 import sys
 
-from blindspot.llm import LLM, FUZZ_MODEL, LLMError
+from blindspot.llm import LLM, LLMError
 from blindspot.types import Mutant
 
 SYSTEM = (
@@ -22,8 +22,8 @@ SYSTEM = (
 
 
 class SemanticMutator:
-    def __init__(self, llm: LLM | None = None, *, temperature: float = 1.0) -> None:
-        self._llm = llm or LLM(FUZZ_MODEL)
+    def __init__(self, llm: LLM, *, temperature: float = 1.0) -> None:
+        self._llm = llm
         self._temperature = temperature
 
     def mutate(self, seed: str, *, rng: Random) -> Iterator[Mutant]:

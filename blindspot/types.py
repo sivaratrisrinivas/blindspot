@@ -108,6 +108,7 @@ class FuzzConfig:
     judge_budget: int = 40
     time_budget_s: float | None = None
     guided: bool = True
+    provider: str = "groq"
 
 
 @dataclass
@@ -118,6 +119,7 @@ class RunStats:
     per_oracle: dict[str, int] = field(default_factory=dict)
     llm_calls: int = 0
     cost_usd: float = 0.0
+    cost_known: bool = True   # False once a call ran on a model with no published price
     wall_s: float = 0.0
 
     @property

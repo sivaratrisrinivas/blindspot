@@ -7,6 +7,7 @@ from blindspot.oracles.crash import CrashOracle
 from blindspot.oracles.judge import JudgeOracle
 from blindspot.oracles.metamorphic import MetamorphicOracle
 from blindspot.oracles.schema import SchemaOracle
+from blindspot.llm import DEFAULT_PROVIDER
 from blindspot.types import Finding, Oracle, OracleContext
 
 __all__ = [
@@ -15,9 +16,11 @@ __all__ = [
 ]
 
 
-def default_oracles(*, judge: JudgeOracle | None = None) -> list[Oracle]:
+def default_oracles(*, judge: JudgeOracle | None = None,
+                    provider_name: str = DEFAULT_PROVIDER) -> list[Oracle]:
     """Cheapest / most-certain first. Judge last, and only if nothing proved it."""
-    return [CrashOracle(), SchemaOracle(), MetamorphicOracle(), judge or JudgeOracle()]
+    return [CrashOracle(), SchemaOracle(), MetamorphicOracle(),
+            judge or JudgeOracle(provider_name=provider_name)]
 
 
 def run_oracles(oracles: list[Oracle], ctx: OracleContext) -> list[Finding]:
