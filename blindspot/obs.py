@@ -32,19 +32,31 @@ def flush() -> None:
             pass
 
 
+# neatlogs accepts only these OpenInference span kinds.
+_KINDS = {"WORKFLOW", "AGENT", "CHAIN", "TOOL", "RETRIEVER", "EMBEDDING",
+          "EVALUATOR", "GUARDRAIL", "MCP_TOOL", "MEMORY"}
+
+
 def span(kind: str, name: str | None = None, **kw):
-    """@obs.span("WORKFLOW", "fuzz") — real neatlogs span when enabled, else identity."""
+    """@obs.span("CHAIN", "groq.complete") — real neatlogs span when enabled, else
+    identity. A tracing failure (bad kind, exporter error) must never break the
+    wrapped function, so it degrades to a plain call."""
+    kind = kind if kind in _KINDS else "CHAIN"
+
     def deco(fn):
-        real = None
+        state: dict = {"real": None, "tried": False}
 
         @functools.wraps(fn)
         def wrapper(*a, **k):
-            nonlocal real
-            if _ENABLED and _nl is not None:
-                if real is None:
-                    real = _nl.span(kind, name or fn.__name__, **kw)(fn)
-                return real(*a, **k)
-            return fn(*a, **k)
+            if not (_ENABLED and _nl is not None):
+                return fn(*a, **k)
+            if not state["tried"]:
+                state["tried"] = True
+                try:
+                    state["real"] = _nl.span(kind, name or fn.__name__, **kw)(fn)
+                except Exception:  # noqa: BLE001 — a bad span kind must not break fn
+                    state["real"] = None
+            return (state["real"] or fn)(*a, **k)
 
         return wrapper
 

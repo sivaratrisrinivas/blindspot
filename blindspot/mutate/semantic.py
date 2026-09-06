@@ -7,7 +7,9 @@ from __future__ import annotations
 from collections.abc import Iterator
 from random import Random
 
-from blindspot.llm import LLM, FUZZ_MODEL
+import sys
+
+from blindspot.llm import LLM, FUZZ_MODEL, LLMError
 from blindspot.types import Mutant
 
 SYSTEM = (
@@ -30,7 +32,8 @@ class SemanticMutator:
                 text = self._llm.complete(
                     SYSTEM, f"EXAMPLE INPUT:\n{seed}", temperature=self._temperature
                 ).strip()
-            except Exception:  # noqa: BLE001 — a dead model must not stop the loop
+            except LLMError as exc:  # a dead / throttled model must not stop the loop
+                print(f"[blindspot] semantic mutation disabled: {exc}", file=sys.stderr)
                 return
             text = text.strip().strip('"')
             if not text or text == seed:

@@ -38,7 +38,7 @@ class LLM:
         self.prompt_tokens = 0
         self.completion_tokens = 0
 
-    @obs.span("LLM", "groq.complete")
+    @obs.span("CHAIN", "groq.complete")
     def complete(
         self,
         system: str,
