@@ -15,7 +15,8 @@ Planted blind spots, each a failure *class* Blindspot should rediscover on its o
      comma-free "USD 10000.00" hits it.             [metamorphic: reformat_currency]
   4. amount parser is US-format only; European "1.234,56" and mangled amounts raise.
                                                      [crash: AmountParseError]
-  5. date parser is ISO-only; "1 March 2026" raises. [crash: DateFormatError]
+  5. date parser is ISO-only; a non-ISO or missing date is a clean refusal
+     (terminal="refused"), never an unhandled crash.
   6. anything dated before 2026-01-01 is a hard reject. [crash: PeriodClosedError]
 """
 
@@ -132,7 +133,11 @@ def run(text: str) -> AgentRun:
         vendor = _parse_vendor(text)
         calls.append(ToolCall("parse_vendor", {"vendor": vendor}, ok=vendor != "UNKNOWN"))
 
-        y, mo, d = _parse_date(text)
+        try:
+            y, mo, d = _parse_date(text)
+        except DateFormatError:
+            return done("I can't book this without a valid invoice date — please "
+                        "resend the invoice with an ISO (YYYY-MM-DD) date.", "refused")
         calls.append(ToolCall("check_period", {"year": y, "month": mo}, ok=True))
 
         amount = _parse_amount(text)
