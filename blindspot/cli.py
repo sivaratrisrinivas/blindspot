@@ -13,6 +13,7 @@ from rich.console import Console
 from rich.live import Live
 from rich.table import Table
 
+from blindspot import obs
 from blindspot.cluster import cluster, minimise_class, rank
 from blindspot.oracles import default_oracles
 from blindspot.runner import run_fuzz
@@ -65,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.no_semantic:
         os.environ["BLINDSPOT_NO_SEMANTIC"] = "1"
 
+    traced = obs.init()
     spec = _load_spec(args.spec)
     cfg = FuzzConfig(
         iterations=args.iterations, parallelism=args.parallelism, seed=args.seed,
@@ -77,7 +79,8 @@ def main(argv: list[str] | None = None) -> int:
     run_dir.mkdir(parents=True, exist_ok=True)
 
     console.rule(f"[bold]Blindspot → {spec.name} agent")
-    console.print(f"seeds: {len(spec.seeds)}   oracles: {', '.join(o.name for o in oracles)}\n")
+    console.print(f"seeds: {len(spec.seeds)}   oracles: {', '.join(o.name for o in oracles)}"
+                  + ("   [dim]· neatlogs on[/]" if traced else "") + "\n")
 
     state = {"classes": 0}
     with Live(_counter(spec.name, RunStats(), 0), console=console, refresh_per_second=12) as live:
@@ -112,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.fix:
         _dispatch(classes, spec, str(test_path))
 
+    obs.flush()
     return 0
 
 

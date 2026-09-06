@@ -13,6 +13,7 @@ import time
 from collections.abc import Callable
 from random import Random
 
+from blindspot import obs
 from blindspot.corpus import Corpus
 from blindspot.llm import LLM, FUZZ_MODEL
 from blindspot.mutate import CompositeMutator, DeterministicMutator, SemanticMutator
@@ -75,6 +76,7 @@ def _build_mutator(cfg: FuzzConfig) -> CompositeMutator:
     return CompositeMutator(DeterministicMutator(), sem)
 
 
+@obs.span("WORKFLOW", "fuzz")
 def run_fuzz(
     spec: AgentSpec,
     cfg: FuzzConfig,

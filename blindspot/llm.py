@@ -8,6 +8,8 @@ import time
 
 from openai import OpenAI
 
+from blindspot import obs
+
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 FUZZ_MODEL = "openai/gpt-oss-20b"       # ~0.53s round trip, does tool calls
 JUDGE_MODEL = "openai/gpt-oss-120b"     # slower, used sparingly by the judge oracle
@@ -36,6 +38,7 @@ class LLM:
         self.prompt_tokens = 0
         self.completion_tokens = 0
 
+    @obs.span("LLM", "groq.complete")
     def complete(
         self,
         system: str,
